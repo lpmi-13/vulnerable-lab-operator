@@ -42,9 +42,9 @@ func (r *VulnerableLabReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	// 2. Check if the lab has already been processed and is finished
-	if lab.Status.State == "Remediated" {
-		logger.Info("Lab already remediated. Nothing more to do.")
+	// 2. If the lab is already remediated, do nothing
+	if lab.Status.State == securitylabv1alpha1.StateRemediated {
+		logger.Info("Lab already remediated, skipping reconciliation")
 		return ctrl.Result{}, nil
 	}
 

@@ -64,6 +64,19 @@ func createNamespaceIfNotExists(ctx context.Context, c client.Client, namespace 
 func applyK01(ctx context.Context, c client.Client, namespace string) error {
 	logger := log.FromContext(ctx)
 
+	// Check if the deployment already exists
+	existingDeployment := &appsv1.Deployment{}
+	err := c.Get(ctx, client.ObjectKey{Name: "insecure-workload", Namespace: namespace}, existingDeployment)
+	if err == nil {
+		// Deployment already exists, nothing to do
+		logger.Info("K01 deployment already exists", "namespace", namespace)
+		return nil
+	}
+	if !errors.IsNotFound(err) {
+		// Some other error occurred
+		return fmt.Errorf("failed to check for existing deployment: %w", err)
+	}
+
 	// Create a privileged pod deployment
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
