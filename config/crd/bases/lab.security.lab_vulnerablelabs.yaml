@@ -39,13 +39,31 @@ spec:
           spec:
             description: VulnerableLabSpec defines the desired state of VulnerableLab.
             properties:
-              foo:
-                description: Foo is an example field of VulnerableLab. Edit vulnerablelab_types.go
-                  to remove/update
+              vulnerability:
+                enum:
+                - K01
+                - K02
+                - K03
+                - K04
+                - K06
+                - K07
+                - K08
+                - K09
+                - K10
                 type: string
             type: object
           status:
             description: VulnerableLabStatus defines the observed state of VulnerableLab.
+            properties:
+              chosenVulnerability:
+                description: The chosen vulnerability for this instance
+                type: string
+              message:
+                description: A message for the student
+                type: string
+              state:
+                description: State of the lab (Vulnerable, Remediated, Error)
+                type: string
             type: object
         type: object
     served: true

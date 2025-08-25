@@ -1,5 +1,16 @@
 # vulnerable-k8s-operator
-// TODO(user): Add simple overview of use/purpose
+Sometimes, it's helpful to practice identifying security vulnerabilities in a running k8s cluster that's not production. So this is a very simple k8s operator that picks a random vulnerability from the [OWASP Kubernetes Top Ten](https://owasp.org/www-project-kubernetes-top-ten/) and configures a k3s cluster with that misconfiguration.
+
+> NB: Becuase K05 from the list, Indequate Logging and Monitoring, is a bit tricky/brittle to detect, we've skipped it here, but it's definitely part of a wider security audit that should be done in a production system.
+
+The first thing to do is run some scanners to see what you can pick up (or you can eyeball the cluster/spec/etc, but the scanners are probably what you'll be using in production automation).
+
+- [kubescape](https://kubescape.io/docs/install-cli/) (for K01, K03, K04, K07, K08)
+- kubeaudit (for K01, K06, K08)
+- [kube-bench](https://aquasecurity.github.io/kube-bench/v0.6.7/installation/) (for K09)
+- [trivy](https://trivy.dev/dev/getting-started/installation/) (for K02, once you've identified an insecure image)
+
+...I don't currently have a good automated tool for K10 (Outdated and Vulnerable Components, but I'm sure we can find something)
 
 ## Description
 // TODO(user): An in-depth paragraph about your project and overview of use

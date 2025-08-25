@@ -20,23 +20,32 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // VulnerableLabSpec defines the desired state of VulnerableLab.
 type VulnerableLabSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of VulnerableLab. Edit vulnerablelab_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Enum=K01;K02;K03;K04;K06;K07;K08;K09;K10
+	Vulnerability string `json:"vulnerability,omitempty"`
 }
 
 // VulnerableLabStatus defines the observed state of VulnerableLab.
 type VulnerableLabStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// The chosen vulnerability for this instance
+	// +optional
+	ChosenVulnerability string `json:"chosenVulnerability,omitempty"`
+	// State of the lab (Vulnerable, Remediated, Error)
+	// +optional
+	State string `json:"state,omitempty"`
+	// A message for the student
+	// +optional
+	Message string `json:"message,omitempty"`
 }
+
+const (
+	StateVulnerable  = "Vulnerable"
+	StateRemediated  = "Remediated"
+	StateError       = "Error"
+	StateInitialized = "Initialized"
+)
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
