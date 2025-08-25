@@ -33,7 +33,11 @@ The first thing to do is run some scanners to see what you can pick up (or you c
 ...I don't currently have a good automated tool for K10 (Outdated and Vulnerable Components, but I'm sure we can find something)
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+For V1, we're just going to use a specific misconfiguration for each of the top ten. For V2, we'll randomize the particular type of misconfiguration within each of the categories. For example, for K02, we can select from the following:
+- untrusted image registries
+- container images with CRITICAL CVEs
+- configuration poisoning to use an http protocol instead of https
+- addition of a malicious init container
 
 ## Getting Started
 
