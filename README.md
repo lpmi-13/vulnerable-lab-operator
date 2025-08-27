@@ -79,8 +79,10 @@ Make sure you have the proper permission to the registry if the above commands d
 **Install the CRDs into the cluster:**
 
 ```sh
-make install
+kubectl apply -f <url-to-yaml>
 ```
+
+> We don't have the yaml for this yet, but once we're ready, I can put it in a github repo
 
 **Deploy the Manager to the cluster with the image specified by `IMG`:**
 
