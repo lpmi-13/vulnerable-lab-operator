@@ -32,7 +32,7 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 	case "K01":
 		return applyK01(ctx, c, namespace)
 	case "K02":
-        return applyK02(ctx, c, namespace)
+		return applyK02(ctx, c, namespace)
 	// case "K03":
 	// return applyK03(ctx, c, namespace)
 	// ... Add cases for K04, K06, K07, K08, K09, K10

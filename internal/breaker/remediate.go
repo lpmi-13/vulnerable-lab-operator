@@ -30,11 +30,11 @@ import (
 
 // CheckRemediation checks if a specific vulnerability has been fixed.
 func CheckRemediation(ctx context.Context, c client.Client, vulnerabilityID, targetResource, namespace string) (bool, error) {
-    // For now, we only handle K01
-    if vulnerabilityID == "K01" {
-        return checkK01(ctx, c, targetResource, namespace)
-    }
-    return false, fmt.Errorf("unknown vulnerability ID for remediation check: %s", vulnerabilityID)
+	// For now, we only handle K01
+	if vulnerabilityID == "K01" {
+		return checkK01(ctx, c, targetResource, namespace)
+	}
+	return false, fmt.Errorf("unknown vulnerability ID for remediation check: %s", vulnerabilityID)
 }
 
 // checkK01 verifies if the specific deployment is no longer privileged
