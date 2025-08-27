@@ -34,41 +34,37 @@ func (r *VulnerableLabReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	var lab securitylabv1alpha1.VulnerableLab
 	if err := r.Get(ctx, req.NamespacedName, &lab); err != nil {
 		if errors.IsNotFound(err) {
-			// CR was deleted. We can just return as the namespace will be orphaned or deleted separately.
 			logger.Info("VulnerableLab resource deleted.")
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 
-	// If the lab is already remediated, we just wait. The student should delete the CR to reset.
+	// If the lab is already remediated, we just wait.
 	if lab.Status.State == securitylabv1alpha1.StateRemediated {
 		logger.Info("Lab already remediated. Waiting for CR deletion to reset.", "name", req.Name)
 		return ctrl.Result{}, nil
 	}
 
-	namespace := getLabNamespace(req.Name) // e.g., "lab-" + req.Name
+	namespace := getLabNamespace(req.Name)
 
 	// Check if the lab namespace exists
 	var ns corev1.Namespace
 	err := r.Get(ctx, client.ObjectKey{Name: namespace}, &ns)
 	namespaceExists := err == nil
 	if err != nil && !errors.IsNotFound(err) {
-		return ctrl.Result{}, err // Some other error
+		return ctrl.Result{}, err
 	}
 
-	// 1. CASE: Namespace does NOT exist. We need to initialize the lab.
+	// 1. CASE: Namespace does NOT exist. Initialize the lab.
 	if !namespaceExists {
 		logger.Info("Initializing new lab environment", "namespace", namespace)
 
-		// Determine the vulnerability (in this case, we're hardcoding to K01 for now)
 		chosenVuln := "K01"
-		// For K01, choose a random target
-		viableTargets := []string{"api", "webapp", "redis-cache", "prometheus", "grafana"}
+		viableTargets := []string{"api", "webapp", "redis-cache", "grafana", "prometheus"}
 		randomIndex := r.selectRandomIndex(len(viableTargets), lab.UID)
 		targetDeployment := viableTargets[randomIndex]
 
-		// Build and deploy the application stack with the vulnerability
 		if err := breaker.InitializeLab(ctx, r.Client, chosenVuln, targetDeployment, namespace); err != nil {
 			logger.Error(err, "Failed to initialize lab")
 			lab.Status.State = securitylabv1alpha1.StateError
@@ -79,7 +75,6 @@ func (r *VulnerableLabReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			return ctrl.Result{}, err
 		}
 
-		// Update the CR status to reflect the chosen vulnerability and target
 		lab.Status.ChosenVulnerability = chosenVuln
 		lab.Status.TargetResource = targetDeployment
 		lab.Status.State = securitylabv1alpha1.StateVulnerable
@@ -90,67 +85,52 @@ func (r *VulnerableLabReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 
 		logger.Info("Lab initialization complete", "vulnerability", chosenVuln, "target", targetDeployment)
-		// Requeue shortly to start checking for remediation
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+
+		// KEY FIX: Wait longer before checking remediation to allow resources to be created
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil // Increased from 10 to 30 seconds
 	}
 
 	// 2. CASE: Namespace exists. Check if the vulnerability has been remediated.
+	// ADD A CHECK: Only check if we're in StateVulnerable, not if we're still initializing
+	if lab.Status.State != securitylabv1alpha1.StateVulnerable {
+		logger.Info("Namespace exists but lab is not in vulnerable state, requeuing", "state", lab.Status.State)
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
 	logger.Info("Checking if vulnerability has been remediated", "vulnerability", lab.Status.ChosenVulnerability, "target", lab.Status.TargetResource)
 
 	isFixed, err := breaker.CheckRemediation(ctx, r.Client, lab.Status.ChosenVulnerability, lab.Status.TargetResource, namespace)
 	if err != nil {
 		logger.Error(err, "Failed to check remediation status")
-		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil // Re-try after a delay
+		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
 	if !isFixed {
 		logger.Info("Vulnerability not yet remediated", "target", lab.Status.TargetResource)
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil // Check again later
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// 3. CASE: The vulnerability has been FIXED! Reset the lab.
 	logger.Info("Vulnerability remediated. Resetting lab namespace.", "namespace", namespace)
-	if err := r.Delete(ctx, &ns, &client.DeleteOptions{}); err != nil { // Delete the namespace
+	if err := r.Delete(ctx, &ns, &client.DeleteOptions{}); err != nil {
 		logger.Error(err, "Failed to delete lab namespace after remediation")
 		return ctrl.Result{}, err
 	}
 
-	// Update the CR status to show it's ready for a new round
-	// Clear the target, as the next initialization will choose a new one
 	lab.Status.State = securitylabv1alpha1.StateRemediated
-	lab.Status.TargetResource = "" // Clear the target
+	lab.Status.TargetResource = ""
 	lab.Status.Message = "Congratulations! You fixed the issue. Delete this VulnerableLab resource and create a new one to try another challenge."
 	if err := r.Status().Update(ctx, &lab); err != nil {
 		logger.Error(err, "Failed to update remediated status")
 		return ctrl.Result{}, err
 	}
 
-	// No need to requeue. The next CR creation will trigger a new lab.
 	return ctrl.Result{}, nil
 }
 
 // getLabNamespace generates a deterministic namespace name for the lab
 func getLabNamespace(labName string) string {
 	return "lab-" + labName
-}
-
-// selectRandomVulnerability generates a deterministic but random-seeming choice based on the CR's UID.
-func (r *VulnerableLabReconciler) selectRandomVulnerability(uid types.UID) string {
-	// Create a stable seed from the UID
-	// hash := sha256.Sum256([]byte(uid))
-	// seedBytes := hash[:8] // Use first 8 bytes of the hash for the seed
-	// intSeed := int64(binary.BigEndian.Uint64(seedBytes))
-
-	// Create a new PRNG with this seed
-	// source := rand.NewSource(intSeed)
-	// localRand := rand.New(source)
-
-	// Our list of vulnerabilities, excluding K05
-	// vulnerabilities := []string{"K01", "K02", "K03", "K04", "K06", "K07", "K08", "K09", "K10"}
-	// randomIndex := localRand.Intn(len(vulnerabilities))
-
-	// return vulnerabilities[randomIndex]
-	return "K02"
 }
 
 // selectRandomIndex generates a deterministic index based on a UID

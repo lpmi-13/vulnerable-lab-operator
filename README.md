@@ -47,6 +47,17 @@ Quick-start: if nothing is happening, run these commands, in order:
 - make manifests (you probably don't need this unless you updated code in the operator)
 - make install
 - make run
+```sh
+kubectl apply -f - <<EOF
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: test-lab
+spec:
+  vulnerability: "K01"
+EOF
+```
+(the final step is the thing that actually creates the CRD...the reconciler won't do anything until that happens)
 
 ### Prerequisites
 - go version v1.24.0+

@@ -11,13 +11,100 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// GetAppStack returns a complete application stack of Kubernetes objects for the given namespace.
-// This represents the "healthy" baseline state before any vulnerabilities are applied.
 func GetAppStack(namespace string) []client.Object {
 	pathPrefix := networkingv1.PathTypePrefix
 
 	return []client.Object{
-		// 1. Redis Cache
+		// 1. PostgreSQL Database
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "postgres-db",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "database"},
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To(int32(1)),
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "postgres-db", "app.kubernetes.io/component": "database"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "postgres-db", "app.kubernetes.io/component": "database"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  "postgres",
+								Image: "postgres:15-alpine",
+								Ports: []corev1.ContainerPort{
+									{
+										ContainerPort: 5432,
+										Name:          "postgres",
+									},
+								},
+								Env: []corev1.EnvVar{
+									{
+										Name:  "POSTGRES_DB",
+										Value: "appdb",
+									},
+									{
+										Name:  "POSTGRES_USER",
+										Value: "appuser",
+									},
+									{
+										Name:  "POSTGRES_PASSWORD",
+										Value: "apppassword",
+									},
+								},
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{
+										corev1.ResourceMemory: resource.MustParse("256Mi"),
+										corev1.ResourceCPU:    resource.MustParse("100m"),
+									},
+									Limits: corev1.ResourceList{
+										corev1.ResourceMemory: resource.MustParse("512Mi"),
+										corev1.ResourceCPU:    resource.MustParse("200m"),
+									},
+								},
+								VolumeMounts: []corev1.VolumeMount{
+									{
+										Name:      "postgres-data",
+										MountPath: "/var/lib/postgresql/data",
+									},
+								},
+							},
+						},
+						Volumes: []corev1.Volume{
+							{
+								Name: "postgres-data",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "postgres-service",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "database"},
+			},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "postgres-db"},
+				Ports: []corev1.ServicePort{
+					{
+						Port:       5432,
+						TargetPort: intstr.FromString("postgres"),
+						Name:       "postgres",
+					},
+				},
+			},
+		},
+
+		// 2. Redis Cache
 		&appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "redis-cache",
@@ -37,7 +124,7 @@ func GetAppStack(namespace string) []client.Object {
 						Containers: []corev1.Container{
 							{
 								Name:  "redis",
-								Image: "redis:7.2-alpine", // Use a specific, recent version
+								Image: "redis:7.2-alpine",
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 6379,
@@ -78,7 +165,220 @@ func GetAppStack(namespace string) []client.Object {
 			},
 		},
 
-		// 2. API Service
+		// 3. Prometheus Monitoring
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "prometheus",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "monitoring"},
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To(int32(1)),
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "prometheus", "app.kubernetes.io/component": "monitoring"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "prometheus", "app.kubernetes.io/component": "monitoring"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  "prometheus",
+								Image: "prom/prometheus:v2.47.2",
+								Ports: []corev1.ContainerPort{
+									{
+										ContainerPort: 9090,
+										Name:          "http",
+									},
+								},
+								Args: []string{
+									"--config.file=/etc/prometheus/prometheus.yml",
+									"--storage.tsdb.path=/prometheus",
+									"--web.console.libraries=/etc/prometheus/console_libraries",
+									"--web.console.templates=/etc/prometheus/consoles",
+									"--web.enable-lifecycle",
+								},
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{
+										corev1.ResourceMemory: resource.MustParse("256Mi"),
+										corev1.ResourceCPU:    resource.MustParse("100m"),
+									},
+									Limits: corev1.ResourceList{
+										corev1.ResourceMemory: resource.MustParse("512Mi"),
+										corev1.ResourceCPU:    resource.MustParse("200m"),
+									},
+								},
+								VolumeMounts: []corev1.VolumeMount{
+									{
+										Name:      "prometheus-config",
+										MountPath: "/etc/prometheus",
+									},
+									{
+										Name:      "prometheus-data",
+										MountPath: "/prometheus",
+									},
+								},
+							},
+						},
+						Volumes: []corev1.Volume{
+							{
+								Name: "prometheus-config",
+								VolumeSource: corev1.VolumeSource{
+									ConfigMap: &corev1.ConfigMapVolumeSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: "prometheus-config",
+										},
+									},
+								},
+							},
+							{
+								Name: "prometheus-data",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "prometheus-service",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "monitoring"},
+			},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "prometheus"},
+				Ports: []corev1.ServicePort{
+					{
+						Port:       9090,
+						TargetPort: intstr.FromString("http"),
+						Name:       "http",
+					},
+				},
+			},
+		},
+
+		// 4. Prometheus ConfigMap
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "prometheus-config",
+				Namespace: namespace,
+			},
+			Data: map[string]string{
+				"prometheus.yml": `
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'api'
+    static_configs:
+      - targets: ['api-service:9898']
+
+  - job_name: 'webapp'
+    static_configs:
+      - targets: ['webapp-service:3000']
+`,
+			},
+		},
+
+		// 5. Grafana Dashboard
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "grafana",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "monitoring"},
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To(int32(1)),
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "grafana", "app.kubernetes.io/component": "monitoring"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "grafana", "app.kubernetes.io/component": "monitoring"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  "grafana",
+								Image: "grafana/grafana:10.2.0",
+								Ports: []corev1.ContainerPort{
+									{
+										ContainerPort: 3000,
+										Name:          "http",
+									},
+								},
+								Env: []corev1.EnvVar{
+									{
+										Name:  "GF_SECURITY_ADMIN_USER",
+										Value: "admin",
+									},
+									{
+										Name:  "GF_SECURITY_ADMIN_PASSWORD",
+										Value: "admin",
+									},
+									{
+										Name:  "GF_USERS_ALLOW_SIGN_UP",
+										Value: "false",
+									},
+								},
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{
+										corev1.ResourceMemory: resource.MustParse("256Mi"),
+										corev1.ResourceCPU:    resource.MustParse("100m"),
+									},
+									Limits: corev1.ResourceList{
+										corev1.ResourceMemory: resource.MustParse("512Mi"),
+										corev1.ResourceCPU:    resource.MustParse("200m"),
+									},
+								},
+								VolumeMounts: []corev1.VolumeMount{
+									{
+										Name:      "grafana-data",
+										MountPath: "/var/lib/grafana",
+									},
+								},
+							},
+						},
+						Volumes: []corev1.Volume{
+							{
+								Name: "grafana-data",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "grafana-service",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "monitoring"},
+			},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "grafana"},
+				Ports: []corev1.ServicePort{
+					{
+						Port:       3000,
+						TargetPort: intstr.FromString("http"),
+						Name:       "http",
+					},
+				},
+			},
+		},
+
+		// 6. API Service
 		&appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "api",
@@ -98,7 +398,7 @@ func GetAppStack(namespace string) []client.Object {
 						Containers: []corev1.Container{
 							{
 								Name:  "api-server",
-								Image: "ghcr.io/stefanprodan/podinfo:6.5.2", // A popular, simple demo API
+								Image: "ghcr.io/stefanprodan/podinfo:6.5.2",
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 9898,
@@ -109,6 +409,10 @@ func GetAppStack(namespace string) []client.Object {
 									{
 										Name:  "REDIS_URL",
 										Value: "redis-service:6379",
+									},
+									{
+										Name:  "DATABASE_URL",
+										Value: "postgres-service:5432",
 									},
 								},
 								Resources: corev1.ResourceRequirements{
@@ -157,7 +461,7 @@ func GetAppStack(namespace string) []client.Object {
 				Selector: map[string]string{"app": "api"},
 				Ports: []corev1.ServicePort{
 					{
-						Port:       80,
+						Port:       9898,
 						TargetPort: intstr.FromString("http"),
 						Name:       "http",
 					},
@@ -165,7 +469,7 @@ func GetAppStack(namespace string) []client.Object {
 			},
 		},
 
-		// 3. Web App Frontend
+		// 7. Web App Frontend
 		&appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "webapp",
@@ -185,7 +489,7 @@ func GetAppStack(namespace string) []client.Object {
 						Containers: []corev1.Container{
 							{
 								Name:  "web-ui",
-								Image: "nginx:1.25-alpine", // Simple static server
+								Image: "nginx:1.25-alpine",
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 80,
@@ -195,7 +499,7 @@ func GetAppStack(namespace string) []client.Object {
 								Env: []corev1.EnvVar{
 									{
 										Name:  "API_URL",
-										Value: "http://api-service:80",
+										Value: "http://api-service:9898",
 									},
 								},
 								Resources: corev1.ResourceRequirements{
@@ -232,17 +536,17 @@ func GetAppStack(namespace string) []client.Object {
 			},
 		},
 
-		// 4. Ingress - Route traffic to the webapp
+		// 8. Ingress - Route traffic to the webapp and monitoring tools
 		&networkingv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "app-ingress",
 				Namespace: namespace,
 			},
 			Spec: networkingv1.IngressSpec{
-				IngressClassName: ptr.To("traefik"), // k3s uses traefik by default
+				IngressClassName: ptr.To("traefik"),
 				Rules: []networkingv1.IngressRule{
 					{
-						Host: "app.local", // You'll need to add this to your /etc/hosts or use a real DNS
+						Host: "app.local",
 						IngressRuleValue: networkingv1.IngressRuleValue{
 							HTTP: &networkingv1.HTTPIngressRuleValue{
 								Paths: []networkingv1.HTTPIngressPath{
@@ -253,6 +557,26 @@ func GetAppStack(namespace string) []client.Object {
 											Service: &networkingv1.IngressServiceBackend{
 												Name: "webapp-service",
 												Port: networkingv1.ServiceBackendPort{Number: 80},
+											},
+										},
+									},
+									{
+										Path:     "/grafana",
+										PathType: &pathPrefix,
+										Backend: networkingv1.IngressBackend{
+											Service: &networkingv1.IngressServiceBackend{
+												Name: "grafana-service",
+												Port: networkingv1.ServiceBackendPort{Number: 3000},
+											},
+										},
+									},
+									{
+										Path:     "/prometheus",
+										PathType: &pathPrefix,
+										Backend: networkingv1.IngressBackend{
+											Service: &networkingv1.IngressServiceBackend{
+												Name: "prometheus-service",
+												Port: networkingv1.ServiceBackendPort{Number: 9090},
 											},
 										},
 									},
