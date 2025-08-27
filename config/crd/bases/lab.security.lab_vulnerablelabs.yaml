@@ -64,6 +64,10 @@ spec:
               state:
                 description: State of the lab (Vulnerable, Remediated, Error)
                 type: string
+              targetResource:
+                description: The specific target for the vulnerability (e.g., a deployment
+                  name for K01)
+                type: string
             type: object
         type: object
     served: true

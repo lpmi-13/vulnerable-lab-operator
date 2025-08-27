@@ -32,6 +32,9 @@ type VulnerableLabStatus struct {
 	// The chosen vulnerability for this instance
 	// +optional
 	ChosenVulnerability string `json:"chosenVulnerability,omitempty"`
+	// The specific target for the vulnerability (e.g., a deployment name for K01)
+	// +optional
+	TargetResource string `json:"targetResource,omitempty"`
 	// State of the lab (Vulnerable, Remediated, Error)
 	// +optional
 	State string `json:"state,omitempty"`
