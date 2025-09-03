@@ -11,23 +11,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// CheckRemediation verifies if the specified vulnerability has been fixed
-// func CheckRemediation(ctx context.Context, c client.Client, vulnerabilityID string, labName string) (bool, error) {
-// namespace := getLabNamespace(labName)
-//
-// switch vulnerabilityID {
-// case "K01":
-// return checkK01(ctx, c, namespace)
-// case "K02":
-// return checkK02(ctx, c, namespace)
-// case "K03":
-// return checkK03(ctx, c, namespace)
-// ... Add cases for other vulnerabilities
-// default:
-// return false, fmt.Errorf("unknown vulnerability ID: %s", vulnerabilityID)
-// }
-// }
-
 // CheckRemediation checks if a specific vulnerability has been fixed.
 func CheckRemediation(ctx context.Context, c client.Client, vulnerabilityID, targetResource, namespace string) (bool, error) {
 	// For now, we only handle K01
