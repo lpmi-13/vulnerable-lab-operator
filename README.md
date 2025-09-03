@@ -28,7 +28,7 @@ The first thing to do is run some scanners to see what you can pick up (or you c
 - [kubescape](https://kubescape.io/docs/install-cli/) (for K01, K03, K04, K07, K08)
 - kubeaudit (for K01, K06, K08) - deprecated, team recommends moving to kube-bench
 - [kube-bench](https://aquasecurity.github.io/kube-bench/v0.6.7/installation/) (for K09)
-- [trivy](https://trivy.dev/dev/getting-started/installation/) (for K02, once you've identified an insecure image)
+- [trivy](https://trivy.dev/dev/getting-started/installation/) (for K02, once you've identified an insecure image...or you can run it in "k8s mode")
 
 ...I don't currently have a good automated tool for K10 (Outdated and Vulnerable Components, but I'm sure we can find something)
 

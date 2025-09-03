@@ -32,10 +32,11 @@ func GetAppStack(namespace string) []client.Object {
 						Labels: map[string]string{"app": "postgres-db", "app.kubernetes.io/component": "database"},
 					},
 					Spec: corev1.PodSpec{
+						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
 								Name:  "postgres",
-								Image: "postgres:15-alpine",
+								Image: "postgres:16-alpine",
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 5432,
@@ -48,12 +49,26 @@ func GetAppStack(namespace string) []client.Object {
 										Value: "appdb",
 									},
 									{
-										Name:  "POSTGRES_USER",
-										Value: "appuser",
+										Name: "POSTGRES_USER",
+										ValueFrom: &corev1.EnvVarSource{
+											SecretKeyRef: &corev1.SecretKeySelector{
+												LocalObjectReference: corev1.LocalObjectReference{
+													Name: "postgres-credentials",
+												},
+												Key: "username",
+											},
+										},
 									},
 									{
-										Name:  "POSTGRES_PASSWORD",
-										Value: "apppassword",
+										Name: "POSTGRES_PASSWORD",
+										ValueFrom: &corev1.EnvVarSource{
+											SecretKeyRef: &corev1.SecretKeySelector{
+												LocalObjectReference: corev1.LocalObjectReference{
+													Name: "postgres-credentials",
+												},
+												Key: "password",
+											},
+										},
 									},
 								},
 								Resources: corev1.ResourceRequirements{
@@ -103,6 +118,17 @@ func GetAppStack(namespace string) []client.Object {
 				},
 			},
 		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "postgres-credentials",
+				Namespace: namespace,
+			},
+			StringData: map[string]string{
+				"username": "appuser",
+				"password": "apppassword",
+			},
+			Type: corev1.SecretTypeOpaque,
+		},
 
 		// 2. Redis Cache
 		&appsv1.Deployment{
@@ -121,10 +147,11 @@ func GetAppStack(namespace string) []client.Object {
 						Labels: map[string]string{"app": "redis-cache", "app.kubernetes.io/component": "cache"},
 					},
 					Spec: corev1.PodSpec{
+						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
 								Name:  "redis",
-								Image: "redis:7.2-alpine",
+								Image: "redis:8.2-alpine",
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 6379,
@@ -182,10 +209,11 @@ func GetAppStack(namespace string) []client.Object {
 						Labels: map[string]string{"app": "prometheus", "app.kubernetes.io/component": "monitoring"},
 					},
 					Spec: corev1.PodSpec{
+						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
 								Name:  "prometheus",
-								Image: "prom/prometheus:v2.47.2",
+								Image: "prom/prometheus:v3.5.0",
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 9090,
@@ -306,10 +334,11 @@ scrape_configs:
 						Labels: map[string]string{"app": "grafana", "app.kubernetes.io/component": "monitoring"},
 					},
 					Spec: corev1.PodSpec{
+						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
 								Name:  "grafana",
-								Image: "grafana/grafana:10.2.0",
+								Image: "grafana/grafana:12.0.0",
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 3000,
@@ -395,13 +424,15 @@ scrape_configs:
 						Labels: map[string]string{"app": "api", "app.kubernetes.io/component": "backend"},
 					},
 					Spec: corev1.PodSpec{
+						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
-								Name:  "api-server",
-								Image: "ghcr.io/stefanprodan/podinfo:6.5.2",
+								Name:    "api-server",
+								Image:   "node:22-alpine",
+								Command: []string{"sleep", "infinity"}, // Keep container running
 								Ports: []corev1.ContainerPort{
 									{
-										ContainerPort: 9898,
+										ContainerPort: 5000,
 										Name:          "http",
 									},
 								},
@@ -414,6 +445,14 @@ scrape_configs:
 										Name:  "DATABASE_URL",
 										Value: "postgres-service:5432",
 									},
+									{
+										Name:  "USER_SERVICE_URL",
+										Value: "http://user-service-svc:8090",
+									},
+									{
+										Name:  "PAYMENT_SERVICE_URL",
+										Value: "http://payment-service-svc:8091",
+									},
 								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
@@ -424,26 +463,6 @@ scrape_configs:
 										corev1.ResourceMemory: resource.MustParse("128Mi"),
 										corev1.ResourceCPU:    resource.MustParse("100m"),
 									},
-								},
-								LivenessProbe: &corev1.Probe{
-									ProbeHandler: corev1.ProbeHandler{
-										HTTPGet: &corev1.HTTPGetAction{
-											Path: "/healthz",
-											Port: intstr.FromString("http"),
-										},
-									},
-									InitialDelaySeconds: 5,
-									PeriodSeconds:       10,
-								},
-								ReadinessProbe: &corev1.Probe{
-									ProbeHandler: corev1.ProbeHandler{
-										HTTPGet: &corev1.HTTPGetAction{
-											Path: "/readyz",
-											Port: intstr.FromString("http"),
-										},
-									},
-									InitialDelaySeconds: 5,
-									PeriodSeconds:       10,
 								},
 							},
 						},
@@ -461,7 +480,7 @@ scrape_configs:
 				Selector: map[string]string{"app": "api"},
 				Ports: []corev1.ServicePort{
 					{
-						Port:       9898,
+						Port:       5000,
 						TargetPort: intstr.FromString("http"),
 						Name:       "http",
 					},
@@ -469,7 +488,182 @@ scrape_configs:
 			},
 		},
 
-		// 7. Web App Frontend
+		// 7. User Service
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "user-service",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "backend", "app.kubernetes.io/microservice": "user"},
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To(int32(1)),
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "user-service", "app.kubernetes.io/component": "backend"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "user-service", "app.kubernetes.io/component": "backend"},
+					},
+					Spec: corev1.PodSpec{
+						ServiceAccountName: "restricted-sa",
+						Containers: []corev1.Container{
+							{
+								Name:    "user-api",
+								Image:   "python:3.13-alpine",
+								Command: []string{"sleep", "infinity"},
+								Ports: []corev1.ContainerPort{
+									{
+										ContainerPort: 8090,
+										Name:          "http",
+									},
+								},
+								Env: []corev1.EnvVar{
+									{
+										Name:  "DATABASE_URL",
+										Value: "postgres-service:5432",
+									},
+									{
+										Name:  "REDIS_URL",
+										Value: "redis-service:6379",
+									},
+									{
+										Name:  "SERVICE_NAME",
+										Value: "user-service",
+									},
+								},
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{
+										corev1.ResourceMemory: resource.MustParse("64Mi"),
+										corev1.ResourceCPU:    resource.MustParse("50m"),
+									},
+									Limits: corev1.ResourceList{
+										corev1.ResourceMemory: resource.MustParse("128Mi"),
+										corev1.ResourceCPU:    resource.MustParse("100m"),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "user-service-svc",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "backend", "app.kubernetes.io/microservice": "user"},
+			},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "user-service"},
+				Ports: []corev1.ServicePort{
+					{
+						Port:       8090,
+						TargetPort: intstr.FromString("http"),
+						Name:       "http",
+					},
+				},
+			},
+		},
+
+		// 8. Payment Service
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "payment-service",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "backend", "app.kubernetes.io/microservice": "payment"},
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To(int32(1)),
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "payment-service", "app.kubernetes.io/component": "backend"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "payment-service", "app.kubernetes.io/component": "backend"},
+					},
+					Spec: corev1.PodSpec{
+						ServiceAccountName: "restricted-sa",
+						Containers: []corev1.Container{
+							{
+								Name:    "payment-processor",
+								Image:   "ruby:3.3-alpine",
+								Command: []string{"sleep", "infinity"},
+								Ports: []corev1.ContainerPort{
+									{
+										ContainerPort: 8091,
+										Name:          "http",
+									},
+								},
+								Env: []corev1.EnvVar{
+									{
+										Name:  "DATABASE_URL",
+										Value: "postgres-service:5432",
+									},
+									{
+										Name:  "REDIS_URL",
+										Value: "redis-service:6379",
+									},
+									{
+										Name:  "SERVICE_NAME",
+										Value: "payment-service",
+									},
+									{
+										Name: "API_KEY",
+										ValueFrom: &corev1.EnvVarSource{
+											SecretKeyRef: &corev1.SecretKeySelector{
+												LocalObjectReference: corev1.LocalObjectReference{
+													Name: "payment-api-key",
+												},
+												Key: "key",
+											},
+										},
+									},
+								},
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{
+										corev1.ResourceMemory: resource.MustParse("64Mi"),
+										corev1.ResourceCPU:    resource.MustParse("50m"),
+									},
+									Limits: corev1.ResourceList{
+										corev1.ResourceMemory: resource.MustParse("128Mi"),
+										corev1.ResourceCPU:    resource.MustParse("100m"),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "payment-service-svc",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "backend", "app.kubernetes.io/microservice": "payment"},
+			},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "payment-service"},
+				Ports: []corev1.ServicePort{
+					{
+						Port:       8091,
+						TargetPort: intstr.FromString("http"),
+						Name:       "http",
+					},
+				},
+			},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "payment-api-key",
+				Namespace: namespace,
+			},
+			StringData: map[string]string{
+				"key": "sk_test_12345",
+			},
+			Type: corev1.SecretTypeOpaque,
+		},
+
+		// 9. Web App Frontend
 		&appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "webapp",
@@ -486,6 +680,7 @@ scrape_configs:
 						Labels: map[string]string{"app": "webapp", "app.kubernetes.io/component": "frontend"},
 					},
 					Spec: corev1.PodSpec{
+						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
 								Name:  "web-ui",
@@ -536,7 +731,7 @@ scrape_configs:
 			},
 		},
 
-		// 8. Ingress - Route traffic to the webapp and monitoring tools
+		// 10. Ingress - Route traffic to the webapp and monitoring tools
 		&networkingv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "app-ingress",
@@ -585,6 +780,12 @@ scrape_configs:
 						},
 					},
 				},
+			},
+		},
+		&corev1.ServiceAccount{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "restricted-sa",
+				Namespace: namespace,
 			},
 		},
 	}

@@ -72,7 +72,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	logger.Info("Initializing new lab environment", "namespace", namespace)
 
 	chosenVuln := "K01"
-	viableTargets := []string{"api", "webapp", "redis-cache", "prometheus", "grafana", "postgres-db"}
+	viableTargets := []string{"api", "webapp", "redis-cache", "prometheus", "grafana", "postgres-db", "user-service", "payment-service"}
 	randomIndex := r.selectRandomIndex(len(viableTargets))
 	targetDeployment := viableTargets[randomIndex]
 
