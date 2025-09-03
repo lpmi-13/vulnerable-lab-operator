@@ -7,9 +7,9 @@ Sometimes, it's helpful to practice identifying security vulnerabilities in a ru
 
 [K03: Overly Permissive RBAC Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K03-overly-permissive-rbac)
 
-[K04: Lack of Centralized Policy Enforcement](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K04-policy-enforcement)
+[K04: Lack of Centralized Policy Enforcement](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K04-policy-enforcement) (we're skipping this one, since it's difficult to detect controls that evaluate the results of scans)
 
-[K05: Inadequate Logging and Monitoring](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K05-inadequate-logging) (we're skipping this one for now)
+[K05: Inadequate Logging and Monitoring](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K05-inadequate-logging) (we're also skipping this one for now, since it's detecting an absence of something outside the cluster)
 
 [K06: Broken Authentication Mechanisms](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K06-broken-authentication)
 
@@ -26,7 +26,7 @@ Sometimes, it's helpful to practice identifying security vulnerabilities in a ru
 The first thing to do is run some scanners to see what you can pick up (or you can eyeball the cluster/spec/etc, but the scanners are probably what you'll be using in production automation).
 
 - [kubescape](https://kubescape.io/docs/install-cli/) (for K01, K03, K04, K07, K08)
-- kubeaudit (for K01, K06, K08)
+- kubeaudit (for K01, K06, K08) - deprecated, team recommends moving to kube-bench
 - [kube-bench](https://aquasecurity.github.io/kube-bench/v0.6.7/installation/) (for K09)
 - [trivy](https://trivy.dev/dev/getting-started/installation/) (for K02, once you've identified an insecure image)
 
