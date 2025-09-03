@@ -3,10 +3,12 @@ package breaker
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -16,7 +18,7 @@ import (
 )
 
 // BreakCluster applies the specified vulnerability to the cluster
-func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, labName string) error {
+func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, targetResource, labName string) error {
 	logger := log.FromContext(ctx)
 	namespace := getLabNamespace(labName)
 
@@ -30,9 +32,9 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 	// Apply the specific vulnerability
 	switch vulnerabilityID {
 	case "K01":
-		return applyK01(ctx, c, namespace)
+		return applyK01(ctx, c, targetResource, namespace)
 	case "K02":
-		return applyK02(ctx, c, namespace)
+		return applyK02(ctx, c, targetResource, namespace)
 	// case "K03":
 	// return applyK03(ctx, c, namespace)
 	// ... Add cases for K04, K06, K07, K08, K09, K10
@@ -44,6 +46,95 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 // getLabNamespace generates a deterministic namespace name for the lab
 func getLabNamespace(labName string) string {
 	return "lab-" + labName
+}
+
+func getEnvironmentVariables(deploymentName string) []corev1.EnvVar {
+	baseEnv := []corev1.EnvVar{}
+
+	envMap := map[string][]corev1.EnvVar{
+		"api": {
+			{Name: "REDIS_URL", Value: "redis-service:6379"},
+			{Name: "DATABASE_URL", Value: "postgres-service:5432"},
+			{Name: "USER_SERVICE_URL", Value: "http://user-service-svc:8000"},
+			{Name: "PAYMENT_SERVICE_URL", Value: "http://payment-service-svc:8080"},
+		},
+		"webapp": {
+			{Name: "API_URL", Value: "http://api-service:3000"},
+		},
+		"user-service": {
+			{Name: "PODINFO_PORT", Value: "8081"},
+			{Name: "DATABASE_URL", Value: "postgres-service:5432"},
+			{Name: "REDIS_URL", Value: "redis-service:6379"},
+			{Name: "SERVICE_NAME", Value: "user-service"},
+		},
+		"payment-service": {
+			{Name: "PODINFO_PORT", Value: "8082"},
+			{Name: "DATABASE_URL", Value: "postgres-service:5432"},
+			{Name: "REDIS_URL", Value: "redis-service:6379"},
+			{Name: "SERVICE_NAME", Value: "payment-service"},
+			{Name: "API_KEY", Value: "sk_test_12345"},
+		},
+	}
+
+	if env, exists := envMap[deploymentName]; exists {
+		baseEnv = append(baseEnv, env...)
+	}
+
+	return baseEnv
+}
+
+func getContainerPorts(deploymentName string) []corev1.ContainerPort {
+	ports := map[string][]corev1.ContainerPort{
+		"api":             {{ContainerPort: 5000, Name: "http"}},
+		"webapp":          {{ContainerPort: 80, Name: "http"}},
+		"grafana":         {{ContainerPort: 3000, Name: "http"}},
+		"user-service":    {{ContainerPort: 8090, Name: "http"}},
+		"payment-service": {{ContainerPort: 8091, Name: "http"}},
+	}
+	if port, exists := ports[deploymentName]; exists {
+		return port
+	}
+	return []corev1.ContainerPort{{ContainerPort: 8080, Name: "http"}}
+}
+
+func getContainerName(deploymentName string) string {
+	names := map[string]string{
+		"api":             "api-server",
+		"webapp":          "web-ui",
+		"grafana":         "grafana",
+		"user-service":    "user-api",
+		"payment-service": "payment-processor",
+	}
+	if name, exists := names[deploymentName]; exists {
+		return name
+	}
+	return strings.Split(deploymentName, "-")[0]
+}
+
+func isMaliciousImage(image, deployment string) bool {
+	maliciousImages := map[string]string{
+		"api":             "node:14-alpine",
+		"webapp":          "nginx:1.18-alpine",
+		"user-service":    "python:3.7-alpine",
+		"payment-service": "ghcr.io/docker-library/ruby:2.7-alpine",
+		"grafana":         "grafana/grafana:8.3.0",
+		"prometheus":      "prom/prometheus:v2.30.0",
+		"redis-cache":     "redis:5-alpine",
+		"postgres-db":     "postgres:13-alpine",
+	}
+
+	expectedMalicious, exists := maliciousImages[deployment]
+	return exists && image == expectedMalicious
+}
+
+func getContainerCommand(deployment, image string) []string {
+	// For very old or minimal images, we may need to use sleep infinity
+	if strings.Contains(image, "alpine:3.10") {
+		return []string{"sleep", "infinity"}
+	}
+
+	// For application images, they'll have their own entrypoints
+	return nil // Let the image use its default command
 }
 
 // createNamespaceIfNotExists ensures the lab namespace exists
@@ -107,7 +198,7 @@ func InitializeLab(ctx context.Context, c client.Client, vulnerabilityID, target
 }
 
 // applyK01 implements Insecure Workload Configurations
-func applyK01(ctx context.Context, c client.Client, namespace string) error {
+func applyK01(ctx context.Context, c client.Client, targetDeployment, namespace string) error {
 	logger := log.FromContext(ctx)
 
 	// Check if the deployment already exists
@@ -159,59 +250,80 @@ func applyK01(ctx context.Context, c client.Client, namespace string) error {
 	return c.Create(ctx, deployment)
 }
 
-// applyK02 implements Supply Chain Vulnerabilities
-func applyK02(ctx context.Context, c client.Client, namespace string) error {
+// applyK02 implements Supply Chain Vulnerabilities by deploying outdated images with known CVEs
+func applyK02(ctx context.Context, c client.Client, targetDeployment, namespace string) error {
 	logger := log.FromContext(ctx)
+	logger.Info("Applying K02 supply chain vulnerability", "target", targetDeployment, "namespace", namespace)
 
-	// Check if the deployment already exists
+	// Check if the deployment already exists with the malicious image
 	existingDeployment := &appsv1.Deployment{}
-	err := c.Get(ctx, client.ObjectKey{Name: "supply-chain-risk", Namespace: namespace}, existingDeployment)
+	err := c.Get(ctx, client.ObjectKey{Name: targetDeployment, Namespace: namespace}, existingDeployment)
 	if err == nil {
-		logger.Info("K02 deployment already exists", "namespace", namespace)
-		return nil
+		// Check if it already has a malicious image
+		currentImage := existingDeployment.Spec.Template.Spec.Containers[0].Image
+		if isMaliciousImage(currentImage, targetDeployment) {
+			logger.Info("K02 vulnerability already applied", "target", targetDeployment)
+			return nil
+		}
 	}
 	if !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to check for existing deployment: %w", err)
 	}
 
-	// Use your actual ghcr.io image path here
-	maliciousImage := "ghcr.io/your-username/k02-simulated-malicious-app:latest"
+	// Define intentionally vulnerable images for different targets
+	maliciousImages := map[string]string{
+		"api":             "node:14-alpine",
+		"webapp":          "nginx:1.18-alpine",
+		"user-service":    "python:3.7-alpine",
+		"payment-service": "ruby:2.7-alpine",
+		"grafana":         "grafana/grafana:8.3.0",
+		"prometheus":      "prom/prometheus:v2.30.0",
+		"redis-cache":     "redis:5-alpine",
+		"postgres-db":     "postgres:13-alpine",
+	}
 
-	// Create a deployment using the "suspicious" image
+	maliciousImage, exists := maliciousImages[targetDeployment]
+	if !exists {
+		// Fallback for any other targets
+		maliciousImage = "alpine:3.10" // Very old Alpine base image
+	}
+
+	// Create the deployment with the malicious image
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "supply-chain-risk",
+			Name:      targetDeployment,
 			Namespace: namespace,
-			Labels:    map[string]string{"app": "supply-chain-risk"},
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptr.To(int32(1)),
 			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"app": "supply-chain-risk"},
+				MatchLabels: map[string]string{"app": targetDeployment},
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"app": "supply-chain-risk"},
-					// Add some suspicious annotations to make it look even more suspicious
+					Labels: map[string]string{"app": targetDeployment},
+					// Add suspicious annotations to make it look more malicious
 					Annotations: map[string]string{
-						"untrusted-registry.com/image": "true",
+						"deprecated-image": "true",
+						"security-scan":    "failed",
 					},
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  "suspicious-container",
-							Image: maliciousImage,
-							Ports: []corev1.ContainerPort{
-								{
-									ContainerPort: 8080,
+							Name:    getContainerName(targetDeployment),
+							Image:   maliciousImage,
+							Command: getContainerCommand(targetDeployment, maliciousImage),
+							Ports:   getContainerPorts(targetDeployment),
+							Env:     getEnvironmentVariables(targetDeployment),
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+									corev1.ResourceCPU:    resource.MustParse("50m"),
 								},
-							},
-							// Add some suspicious environment variables
-							Env: []corev1.EnvVar{
-								{
-									Name:  "SUSPICIOUS_FLAG",
-									Value: "true",
+								Limits: corev1.ResourceList{
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+									corev1.ResourceCPU:    resource.MustParse("100m"),
 								},
 							},
 						},
@@ -221,8 +333,6 @@ func applyK02(ctx context.Context, c client.Client, namespace string) error {
 		},
 	}
 
-	logger.Info("Creating K02 supply chain risk deployment", "image", maliciousImage)
+	logger.Info("Creating K02 vulnerable deployment", "target", targetDeployment, "image", maliciousImage)
 	return c.Create(ctx, deployment)
 }
-
-// Add similar applyK02, applyK03, etc. functions here

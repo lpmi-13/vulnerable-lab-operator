@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"time"
 
@@ -71,12 +72,27 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	logger := log.FromContext(ctx)
 	logger.Info("Initializing new lab environment", "namespace", namespace)
 
-	chosenVuln := "K01"
-	viableTargets := []string{"api", "webapp", "redis-cache", "prometheus", "grafana", "postgres-db", "user-service", "payment-service"}
-	randomIndex := r.selectRandomIndex(len(viableTargets))
-	targetDeployment := viableTargets[randomIndex]
+	// Randomly choose a vulnerability type
+	vulnerabilities := []string{"K01", "K02"}
+	vulnIndex := r.selectRandomIndex(len(vulnerabilities))
+	chosenVuln := vulnerabilities[vulnIndex]
 
-	if err := breaker.InitializeLab(ctx, r.Client, chosenVuln, targetDeployment, namespace); err != nil {
+	// Choose appropriate targets based on vulnerability type
+	var viableTargets []string
+	switch chosenVuln {
+	case "K01":
+		viableTargets = []string{"api", "webapp", "redis-cache", "prometheus", "grafana", "postgres-db", "user-service", "payment-service"}
+	case "K02":
+		viableTargets = []string{"api", "webapp", "user-service", "payment-service", "grafana"} // Only these are safe for image changes
+	default:
+		viableTargets = []string{"api", "webapp"}
+	}
+
+	targetIndex := r.selectRandomIndex(len(viableTargets))
+	targetDeployment := viableTargets[targetIndex]
+
+	// Update the BreakCluster call to pass the target resource
+	if err := breaker.BreakCluster(ctx, r.Client, chosenVuln, targetDeployment, namespace); err != nil {
 		logger.Error(err, "Failed to initialize lab")
 		lab.Status.State = v1alpha1.StateError
 		lab.Status.Message = "Failed to initialize lab: " + err.Error()
@@ -89,7 +105,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	lab.Status.ChosenVulnerability = chosenVuln
 	lab.Status.TargetResource = targetDeployment
 	lab.Status.State = v1alpha1.StateVulnerable
-	lab.Status.Message = "Cluster is vulnerable. Find and fix the insecure workload configuration. Target: " + targetDeployment
+	lab.Status.Message = fmt.Sprintf("Cluster is vulnerable. Find and fix issue %s. Target: %s", chosenVuln, targetDeployment)
 	if err := r.Status().Update(ctx, lab); err != nil {
 		logger.Error(err, "Failed to update status after lab initialization")
 		return ctrl.Result{}, err
