@@ -40,7 +40,7 @@ func (r *VulnerableLabReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	namespace := getLabNamespace(req.Name)
+	namespace := req.Name
 
 	// STATE MACHINE
 	switch lab.Status.State {
@@ -83,7 +83,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	case "K01":
 		viableTargets = []string{"api", "webapp", "redis-cache", "prometheus", "grafana", "postgres-db", "user-service", "payment-service"}
 	case "K02":
-		viableTargets = []string{"api", "webapp", "user-service", "payment-service", "grafana"} // Only these are safe for image changes
+		viableTargets = []string{"api", "webapp", "user-service", "payment-service", "grafana"}
 	default:
 		viableTargets = []string{"api", "webapp"}
 	}
@@ -91,14 +91,25 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	targetIndex := r.selectRandomIndex(len(viableTargets))
 	targetDeployment := viableTargets[targetIndex]
 
-	// Update the BreakCluster call to pass the target resource
+	// Use BreakCluster instead of InitializeLab
 	if err := breaker.BreakCluster(ctx, r.Client, chosenVuln, targetDeployment, namespace); err != nil {
-		logger.Error(err, "Failed to initialize lab")
+		logger.Error(err, "Failed to apply vulnerability")
+
+		// Get the latest version of the resource before updating
+		if err := r.Get(ctx, client.ObjectKey{Name: lab.Name, Namespace: lab.Namespace}, lab); err != nil {
+			return ctrl.Result{}, err
+		}
+
 		lab.Status.State = v1alpha1.StateError
-		lab.Status.Message = "Failed to initialize lab: " + err.Error()
+		lab.Status.Message = "Failed to apply vulnerability: " + err.Error()
 		if err := r.Status().Update(ctx, lab); err != nil {
 			logger.Error(err, "Failed to update error status")
 		}
+		return ctrl.Result{}, err
+	}
+
+	// Get the latest version of the resource before updating
+	if err := r.Get(ctx, client.ObjectKey{Name: lab.Name, Namespace: lab.Namespace}, lab); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -183,11 +194,6 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 
 	logger.Info("Lab reset complete, will initialize new challenge")
 	return ctrl.Result{Requeue: true}, nil
-}
-
-// getLabNamespace generates a deterministic namespace name for the lab
-func getLabNamespace(labName string) string {
-	return "lab-" + labName
 }
 
 // we want a new random index on every reset

@@ -18,9 +18,8 @@ import (
 )
 
 // BreakCluster applies the specified vulnerability to the cluster
-func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, targetResource, labName string) error {
+func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, targetResource, namespace string) error {
 	logger := log.FromContext(ctx)
-	namespace := getLabNamespace(labName)
 
 	logger.Info("Applying vulnerability", "vulnerability", vulnerabilityID, "namespace", namespace)
 
@@ -41,11 +40,6 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 	default:
 		return fmt.Errorf("unknown vulnerability ID: %s", vulnerabilityID)
 	}
-}
-
-// getLabNamespace generates a deterministic namespace name for the lab
-func getLabNamespace(labName string) string {
-	return "lab-" + labName
 }
 
 func getEnvironmentVariables(deploymentName string) []corev1.EnvVar {
@@ -116,7 +110,7 @@ func isMaliciousImage(image, deployment string) bool {
 		"api":             "node:14-alpine",
 		"webapp":          "nginx:1.18-alpine",
 		"user-service":    "python:3.7-alpine",
-		"payment-service": "ghcr.io/docker-library/ruby:2.7-alpine",
+		"payment-service": "ruby:2.7-alpine",
 		"grafana":         "grafana/grafana:8.3.0",
 		"prometheus":      "prom/prometheus:v2.30.0",
 		"redis-cache":     "redis:5-alpine",
@@ -125,6 +119,20 @@ func isMaliciousImage(image, deployment string) bool {
 
 	expectedMalicious, exists := maliciousImages[deployment]
 	return exists && image == expectedMalicious
+}
+
+// Helper function to get malicious images
+func getMaliciousImages() map[string]string {
+	return map[string]string{
+		"api":             "node:14-alpine",
+		"webapp":          "nginx:1.18-alpine",
+		"user-service":    "python:3.7-alpine",
+		"payment-service": "ruby:2.7-alpine",
+		"grafana":         "grafana/grafana:8.3.0",
+		"prometheus":      "prom/prometheus:v2.30.0",
+		"redis-cache":     "redis:5-alpine",
+		"postgres-db":     "postgres:13-alpine",
+	}
 }
 
 func getContainerCommand(deployment, image string) []string {
@@ -197,37 +205,39 @@ func InitializeLab(ctx context.Context, c client.Client, vulnerabilityID, target
 	return nil
 }
 
-// applyK01 implements Insecure Workload Configurations
+// applyK01 implements Insecure Workload Configurations for a specific target
 func applyK01(ctx context.Context, c client.Client, targetDeployment, namespace string) error {
 	logger := log.FromContext(ctx)
 
-	// Check if the deployment already exists
+	// For K01, we'll create a separate insecure workload rather than modifying existing ones
+	// This keeps the pattern consistent with K02
+	insecureDeploymentName := "insecure-workload-" + targetDeployment
+
+	// Check if the insecure deployment already exists
 	existingDeployment := &appsv1.Deployment{}
-	err := c.Get(ctx, client.ObjectKey{Name: "insecure-workload", Namespace: namespace}, existingDeployment)
+	err := c.Get(ctx, client.ObjectKey{Name: insecureDeploymentName, Namespace: namespace}, existingDeployment)
 	if err == nil {
-		// Deployment already exists, nothing to do
-		logger.Info("K01 deployment already exists", "namespace", namespace)
+		logger.Info("K01 insecure deployment already exists", "namespace", namespace)
 		return nil
 	}
 	if !errors.IsNotFound(err) {
-		// Some other error occurred
 		return fmt.Errorf("failed to check for existing deployment: %w", err)
 	}
 
 	// Create a privileged pod deployment
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "insecure-workload",
+			Name:      insecureDeploymentName,
 			Namespace: namespace,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptr.To(int32(1)),
 			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"app": "insecure-workload"},
+				MatchLabels: map[string]string{"app": insecureDeploymentName},
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"app": "insecure-workload"},
+					Labels: map[string]string{"app": insecureDeploymentName},
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -236,7 +246,7 @@ func applyK01(ctx context.Context, c client.Client, targetDeployment, namespace 
 							Image: "hashicorp/http-echo",
 							Args:  []string{"-text=I'm a privileged container!", "-listen=:8080"},
 							SecurityContext: &corev1.SecurityContext{
-								Privileged: ptr.To(true), // This is the vulnerability
+								Privileged: ptr.To(true),
 								RunAsUser:  ptr.To(int64(0)),
 							},
 						},
@@ -246,7 +256,7 @@ func applyK01(ctx context.Context, c client.Client, targetDeployment, namespace 
 		},
 	}
 
-	logger.Info("Creating K01 insecure deployment")
+	logger.Info("Creating K01 insecure deployment", "target", targetDeployment)
 	return c.Create(ctx, deployment)
 }
 
@@ -255,37 +265,39 @@ func applyK02(ctx context.Context, c client.Client, targetDeployment, namespace 
 	logger := log.FromContext(ctx)
 	logger.Info("Applying K02 supply chain vulnerability", "target", targetDeployment, "namespace", namespace)
 
-	// Check if the deployment already exists with the malicious image
+	// Check if the deployment already exists
 	existingDeployment := &appsv1.Deployment{}
 	err := c.Get(ctx, client.ObjectKey{Name: targetDeployment, Namespace: namespace}, existingDeployment)
+
 	if err == nil {
-		// Check if it already has a malicious image
+		// Deployment exists - check if it already has the malicious image
 		currentImage := existingDeployment.Spec.Template.Spec.Containers[0].Image
-		if isMaliciousImage(currentImage, targetDeployment) {
+
+		// Use a more robust check for malicious images
+		maliciousImages := getMaliciousImages()
+		expectedMalicious, exists := maliciousImages[targetDeployment]
+
+		if exists && currentImage == expectedMalicious {
 			logger.Info("K02 vulnerability already applied", "target", targetDeployment)
 			return nil
 		}
+
+		// If deployment exists but doesn't have malicious image, we need to update it
+		logger.Info("Updating existing deployment with vulnerable image", "target", targetDeployment)
+		patch := client.MergeFrom(existingDeployment.DeepCopy())
+		existingDeployment.Spec.Template.Spec.Containers[0].Image = expectedMalicious
+		return c.Patch(ctx, existingDeployment, patch)
 	}
+
 	if !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to check for existing deployment: %w", err)
 	}
 
-	// Define intentionally vulnerable images for different targets
-	maliciousImages := map[string]string{
-		"api":             "node:14-alpine",
-		"webapp":          "nginx:1.18-alpine",
-		"user-service":    "python:3.7-alpine",
-		"payment-service": "ruby:2.7-alpine",
-		"grafana":         "grafana/grafana:8.3.0",
-		"prometheus":      "prom/prometheus:v2.30.0",
-		"redis-cache":     "redis:5-alpine",
-		"postgres-db":     "postgres:13-alpine",
-	}
-
+	// Deployment doesn't exist - create it with malicious image
+	maliciousImages := getMaliciousImages()
 	maliciousImage, exists := maliciousImages[targetDeployment]
 	if !exists {
-		// Fallback for any other targets
-		maliciousImage = "alpine:3.10" // Very old Alpine base image
+		maliciousImage = "alpine:3.10"
 	}
 
 	// Create the deployment with the malicious image
@@ -302,7 +314,6 @@ func applyK02(ctx context.Context, c client.Client, targetDeployment, namespace 
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{"app": targetDeployment},
-					// Add suspicious annotations to make it look more malicious
 					Annotations: map[string]string{
 						"deprecated-image": "true",
 						"security-scan":    "failed",

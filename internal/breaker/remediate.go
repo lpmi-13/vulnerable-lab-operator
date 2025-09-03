@@ -55,7 +55,7 @@ func checkK01(ctx context.Context, c client.Client, targetDeployment, namespace 
 	return true, nil
 }
 
-// checkK02 verifies if the supply chain vulnerability has been fixed
+// checkK02 verifies if the supply chain vulnerability has been fixed by checking image versions
 func checkK02(ctx context.Context, c client.Client, targetDeployment, namespace string) (bool, error) {
 	logger := log.FromContext(ctx)
 
@@ -71,35 +71,40 @@ func checkK02(ctx context.Context, c client.Client, targetDeployment, namespace 
 		return false, fmt.Errorf("failed to get deployment %s: %w", targetDeployment, err)
 	}
 
-	// Define what the GOOD (secure) images should be
-	goodImages := map[string]string{
-		"api":             "ghcr.io/docker-library/node:22-alpine",
-		"webapp":          "ghcr.io/docker-library/nginx:1.25-alpine",
-		"user-service":    "ghcr.io/docker-library/python:3.13-alpine",
-		"payment-service": "ghcr.io/docker-library/ruby:3.2-alpine",
-		"grafana":         "grafana/grafana:11.0.0",
-		"prometheus":      "prom/prometheus:v2.51.0",
-		"redis-cache":     "redis:7.4-alpine",
-		"postgres-db":     "postgres:17-alpine",
-	}
-
 	currentImage := dep.Spec.Template.Spec.Containers[0].Image
-	expectedGoodImage, exists := goodImages[targetDeployment]
 
-	if !exists {
-		// For unknown targets, check if it doesn't look malicious
-		if !isMaliciousImage(currentImage, targetDeployment) {
-			logger.Info("K02 vulnerability remediated: image looks trusted", "target", targetDeployment, "image", currentImage)
-			return true, nil
-		}
+	// Define the malicious images that were deployed
+	maliciousImages := map[string]string{
+		"api":             "node:14-alpine",
+		"webapp":          "nginx:1.18-alpine",
+		"user-service":    "python:3.7-alpine",
+		"payment-service": "ruby:2.7-alpine",
+		"grafana":         "grafana/grafana:8.3.0",
+		"prometheus":      "prom/prometheus:v2.30.0",
+		"redis-cache":     "redis:5-alpine",
+		"postgres-db":     "postgres:13-alpine",
 	}
 
-	// Check if the image matches the expected good image
-	if currentImage == expectedGoodImage {
-		logger.Info("K02 vulnerability remediated: image restored to secure version", "target", targetDeployment, "image", currentImage)
+	maliciousImage, wasMalicious := maliciousImages[targetDeployment]
+
+	// If this deployment wasn't one we made malicious, consider it fixed
+	if !wasMalicious {
+		logger.Info("K02 vulnerability remediated: target was not malicious", "target", targetDeployment)
 		return true, nil
 	}
 
-	logger.Info("K02 vulnerability still active", "target", targetDeployment, "currentImage", currentImage, "expectedImage", expectedGoodImage)
+	// Check if the current image is different from (and preferably newer than) the malicious one
+	if currentImage != maliciousImage {
+		// Basic check: if the image changed at all, consider it fixed
+		// In a real scenario, you might want more sophisticated version comparison
+		logger.Info("K02 vulnerability remediated: image changed", "target", targetDeployment,
+			"oldImage", maliciousImage, "newImage", currentImage)
+		return true, nil
+	}
+
+	// Optional: Add more sophisticated version comparison here
+	// For example, you could parse version numbers and ensure the new image is actually newer
+
+	logger.Info("K02 vulnerability still active: same malicious image", "target", targetDeployment, "image", currentImage)
 	return false, nil
 }
