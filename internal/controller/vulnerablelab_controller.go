@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/lpmi-13/vulnerable-lab-operator/api/v1alpha1"
+	"github.com/lpmi-13/vulnerable-lab-operator/internal/baseline"
 	"github.com/lpmi-13/vulnerable-lab-operator/internal/breaker"
 )
 
@@ -157,32 +158,51 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 	logger := log.FromContext(ctx)
 	logger.Info("Resetting lab", "namespace", namespace)
 
-	// 1. Check if the namespace exists and handle termination state
+	// Check if the namespace exists
 	var ns corev1.Namespace
-	if err := r.Get(ctx, client.ObjectKey{Name: namespace}, &ns); err == nil {
-		// Namespace exists
-		if ns.Status.Phase == corev1.NamespaceTerminating {
-			// Namespace is still terminating, wait and check again
-			logger.Info("Namespace is terminating, waiting for deletion to complete", "namespace", namespace)
-			return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
-		}
-
-		// Namespace exists but isn't terminating yet - delete it
-		logger.Info("Deleting namespace for reset", "namespace", namespace)
-		if err := r.Delete(ctx, &ns, &client.DeleteOptions{}); err != nil {
-			logger.Error(err, "Failed to delete namespace")
+	if err := r.Get(ctx, client.ObjectKey{Name: namespace}, &ns); err != nil {
+		if errors.IsNotFound(err) {
+			// Namespace doesn't exist - we can proceed with reset
+			logger.Info("Namespace already deleted, proceeding with reset", "namespace", namespace)
+		} else {
+			logger.Error(err, "Failed to check namespace status")
 			return ctrl.Result{}, err
 		}
-		// Wait a bit for deletion to start, then check again
-		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
-	} else if !errors.IsNotFound(err) {
-		// Some other error occurred
-		logger.Error(err, "Failed to check namespace status")
-		return ctrl.Result{}, err
+	} else {
+		// Namespace exists - check if resources still exist and delete them
+		appStack := baseline.GetAppStack(namespace)
+
+		// Check if any resources still exist
+		resourcesExist := false
+		for _, obj := range appStack {
+			if err := r.Get(ctx, client.ObjectKeyFromObject(obj), obj); err == nil {
+				// Resource still exists - delete it
+				if !resourcesExist {
+					logger.Info("Deleting remaining resources in namespace for reset", "namespace", namespace)
+					resourcesExist = true
+				}
+				if err := r.Delete(ctx, obj, &client.DeleteOptions{}); err != nil {
+					if !errors.IsNotFound(err) {
+						logger.Error(err, "Failed to delete resource", "resource", obj.GetName(), "type", fmt.Sprintf("%T", obj))
+					}
+				} else {
+					logger.Info("Deleted resource", "resource", obj.GetName(), "type", fmt.Sprintf("%T", obj))
+				}
+			} else if !errors.IsNotFound(err) {
+				logger.Error(err, "Failed to check resource", "resource", obj.GetName())
+			}
+		}
+
+		if resourcesExist {
+			// Some resources still exist, wait and check again
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+
+		// All resources are gone, proceed with reset
+		logger.Info("All resources deleted, proceeding with reset", "namespace", namespace)
 	}
 
-	// 2. If we get here, the namespace is completely gone or never existed
-	// Now we can reset the status for a new round
+	// Reset the status for a new round
 	lab.Status.ChosenVulnerability = ""
 	lab.Status.TargetResource = ""
 	lab.Status.State = v1alpha1.StateInitialized

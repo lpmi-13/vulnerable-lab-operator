@@ -11,6 +11,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// getSecureSecurityContext returns a secure security context for non-root containers
+func getSecureSecurityContext(uid int64) *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		RunAsUser:                ptr.To(uid),
+		RunAsGroup:               ptr.To(uid),
+		RunAsNonRoot:             ptr.To(true),
+		AllowPrivilegeEscalation: ptr.To(false),
+		ReadOnlyRootFilesystem:   ptr.To(false), // Most apps need to write temp files
+		Capabilities: &corev1.Capabilities{
+			Drop: []corev1.Capability{"ALL"},
+		},
+	}
+}
+
 func GetAppStack(namespace string) []client.Object {
 	pathPrefix := networkingv1.PathTypePrefix
 
@@ -43,6 +57,7 @@ func GetAppStack(namespace string) []client.Object {
 										Name:          "postgres",
 									},
 								},
+								SecurityContext: getSecureSecurityContext(999), // postgres user
 								Env: []corev1.EnvVar{
 									{
 										Name:  "POSTGRES_DB",
@@ -158,6 +173,7 @@ func GetAppStack(namespace string) []client.Object {
 										Name:          "redis",
 									},
 								},
+								SecurityContext: getSecureSecurityContext(999), // redis user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("64Mi"),
@@ -227,6 +243,7 @@ func GetAppStack(namespace string) []client.Object {
 									"--web.console.templates=/etc/prometheus/consoles",
 									"--web.enable-lifecycle",
 								},
+								SecurityContext: getSecureSecurityContext(65534), // nobody user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("256Mi"),
@@ -359,6 +376,7 @@ scrape_configs:
 										Value: "false",
 									},
 								},
+								SecurityContext: getSecureSecurityContext(472), // grafana user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("256Mi"),
@@ -454,6 +472,7 @@ scrape_configs:
 										Value: "http://payment-service-svc:8091",
 									},
 								},
+								SecurityContext: getSecureSecurityContext(1000), // node user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("64Mi"),
@@ -531,6 +550,7 @@ scrape_configs:
 										Value: "user-service",
 									},
 								},
+								SecurityContext: getSecureSecurityContext(1000), // python user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("64Mi"),
@@ -619,6 +639,7 @@ scrape_configs:
 										},
 									},
 								},
+								SecurityContext: getSecureSecurityContext(1000), // ruby user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("64Mi"),

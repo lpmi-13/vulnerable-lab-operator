@@ -27,7 +27,7 @@ func CheckRemediation(ctx context.Context, c client.Client, vulnerabilityID, tar
 func checkK01(ctx context.Context, c client.Client, targetDeployment, namespace string) (bool, error) {
 	logger := log.FromContext(ctx)
 
-	// Get the deployment
+	// Get the deployment - now checking the actual target deployment name from baseline stack
 	dep := &appsv1.Deployment{}
 	err := c.Get(ctx, client.ObjectKey{Name: targetDeployment, Namespace: namespace}, dep)
 	if err != nil {
@@ -41,14 +41,28 @@ func checkK01(ctx context.Context, c client.Client, targetDeployment, namespace 
 
 	// Check if the security context is still insecure
 	container := dep.Spec.Template.Spec.Containers[0]
-	if container.SecurityContext != nil &&
-		container.SecurityContext.Privileged != nil &&
-		*container.SecurityContext.Privileged &&
-		container.SecurityContext.RunAsUser != nil &&
-		*container.SecurityContext.RunAsUser == 0 {
+	if container.SecurityContext != nil {
+		// Check for privileged flag
+		if container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged {
+			logger.Info("K01 vulnerability still active: privileged container", "target", targetDeployment)
+			return false, nil
+		}
 
-		logger.Info("K01 vulnerability still active", "target", targetDeployment)
-		return false, nil
+		// Check for root user
+		if container.SecurityContext.RunAsUser != nil && *container.SecurityContext.RunAsUser == 0 {
+			logger.Info("K01 vulnerability still active: running as root", "target", targetDeployment)
+			return false, nil
+		}
+
+		// Check for dangerous capabilities
+		if container.SecurityContext.Capabilities != nil && len(container.SecurityContext.Capabilities.Add) > 0 {
+			for _, cap := range container.SecurityContext.Capabilities.Add {
+				if cap == "SYS_ADMIN" || cap == "NET_ADMIN" {
+					logger.Info("K01 vulnerability still active: dangerous capabilities", "target", targetDeployment, "capability", cap)
+					return false, nil
+				}
+			}
+		}
 	}
 
 	logger.Info("K01 vulnerability remediated: security context is now secure", "target", targetDeployment)
@@ -73,38 +87,35 @@ func checkK02(ctx context.Context, c client.Client, targetDeployment, namespace 
 
 	currentImage := dep.Spec.Template.Spec.Containers[0].Image
 
-	// Define the malicious images that were deployed
-	maliciousImages := map[string]string{
-		"api":             "node:14-alpine",
-		"webapp":          "nginx:1.18-alpine",
-		"user-service":    "python:3.7-alpine",
-		"payment-service": "ruby:2.7-alpine",
-		"grafana":         "grafana/grafana:8.3.0",
-		"prometheus":      "prom/prometheus:v2.30.0",
-		"redis-cache":     "redis:5-alpine",
-		"postgres-db":     "postgres:13-alpine",
+	// Define the vulnerable images that we deployed - updated to match applyK02ToStack
+	vulnerableImages := map[string]string{
+		"api":             "node:16-alpine",
+		"webapp":          "nginx:1.20-alpine",
+		"user-service":    "python:3.9-alpine",
+		"payment-service": "ruby:3.0-alpine",
+		"grafana":         "grafana/grafana:9.0.0",
 	}
 
-	maliciousImage, wasMalicious := maliciousImages[targetDeployment]
+	vulnerableImage, wasVulnerable := vulnerableImages[targetDeployment]
 
-	// If this deployment wasn't one we made malicious, consider it fixed
-	if !wasMalicious {
-		logger.Info("K02 vulnerability remediated: target was not malicious", "target", targetDeployment)
+	// If this deployment wasn't one we made vulnerable, consider it fixed
+	if !wasVulnerable {
+		logger.Info("K02 vulnerability remediated: target was not vulnerable", "target", targetDeployment)
 		return true, nil
 	}
 
-	// Check if the current image is different from (and preferably newer than) the malicious one
-	if currentImage != maliciousImage {
+	// Check if the current image is different from (and preferably newer than) the vulnerable one
+	if currentImage != vulnerableImage {
 		// Basic check: if the image changed at all, consider it fixed
 		// In a real scenario, you might want more sophisticated version comparison
 		logger.Info("K02 vulnerability remediated: image changed", "target", targetDeployment,
-			"oldImage", maliciousImage, "newImage", currentImage)
+			"oldImage", vulnerableImage, "newImage", currentImage)
 		return true, nil
 	}
 
 	// Optional: Add more sophisticated version comparison here
 	// For example, you could parse version numbers and ensure the new image is actually newer
 
-	logger.Info("K02 vulnerability still active: same malicious image", "target", targetDeployment, "image", currentImage)
+	logger.Info("K02 vulnerability still active: same vulnerable image", "target", targetDeployment, "image", currentImage)
 	return false, nil
 }
