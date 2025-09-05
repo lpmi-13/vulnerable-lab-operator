@@ -43,7 +43,7 @@ For V1, we're just going to use a specific misconfiguration for each of the top 
 
 Quick-start: if nothing is happening, run these commands, in order:
 - kubectl delete vulnerablelab test-lab
-- kubectl delete ns lab-test-lab --ignore-not-found
+- kubectl delete ns test-lab --ignore-not-found
 - make manifests (you probably don't need this unless you updated code in the operator)
 - make install
 - make run
