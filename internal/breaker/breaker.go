@@ -91,8 +91,8 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string) error {
 			container := &dep.Spec.Template.Spec.Containers[0]
 
 			// Randomly choose one of three K01 vulnerability types
-			rand.Seed(time.Now().UnixNano())
-			vulnType := rand.Intn(3)
+			localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
+			vulnType := localRand.Intn(3)
 
 			switch vulnType {
 			case 0: // Privileged container
@@ -100,20 +100,20 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string) error {
 					Privileged: ptr.To(true),
 				}
 				// Add annotation indicating why this is privileged (looks realistic)
-				if dep.Spec.Template.ObjectMeta.Annotations == nil {
-					dep.Spec.Template.ObjectMeta.Annotations = make(map[string]string)
+				if dep.Spec.Template.Annotations == nil {
+					dep.Spec.Template.Annotations = make(map[string]string)
 				}
-				dep.Spec.Template.ObjectMeta.Annotations["container.security.privileged"] = "host-access-required"
+				dep.Spec.Template.Annotations["container.security.privileged"] = "host-access-required"
 
 			case 1: // Running as root
 				container.SecurityContext = &corev1.SecurityContext{
 					RunAsUser: ptr.To(int64(0)),
 				}
 				// Add annotation that looks like a legitimate override
-				if dep.Spec.Template.ObjectMeta.Annotations == nil {
-					dep.Spec.Template.ObjectMeta.Annotations = make(map[string]string)
+				if dep.Spec.Template.Annotations == nil {
+					dep.Spec.Template.Annotations = make(map[string]string)
 				}
-				dep.Spec.Template.ObjectMeta.Annotations["container.security.runAsRoot"] = "legacy-compatibility"
+				dep.Spec.Template.Annotations["container.security.runAsRoot"] = "legacy-compatibility"
 
 			case 2: // Dangerous capabilities
 				container.SecurityContext = &corev1.SecurityContext{
@@ -125,10 +125,10 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string) error {
 					},
 				}
 				// Add annotation that looks like a network requirement
-				if dep.Spec.Template.ObjectMeta.Annotations == nil {
-					dep.Spec.Template.ObjectMeta.Annotations = make(map[string]string)
+				if dep.Spec.Template.Annotations == nil {
+					dep.Spec.Template.Annotations = make(map[string]string)
 				}
-				dep.Spec.Template.ObjectMeta.Annotations["container.security.capabilities"] = "network-management"
+				dep.Spec.Template.Annotations["container.security.capabilities"] = "network-management"
 			}
 
 			return nil
@@ -161,10 +161,10 @@ func applyK02ToStack(appStack []client.Object, targetDeployment string) error {
 			dep.Spec.Template.Spec.Containers[0].Image = vulnerableImage
 
 			// Add subtle annotations that scanners might detect but don't scream "vulnerable"
-			if dep.Spec.Template.ObjectMeta.Annotations == nil {
-				dep.Spec.Template.ObjectMeta.Annotations = make(map[string]string)
+			if dep.Spec.Template.Annotations == nil {
+				dep.Spec.Template.Annotations = make(map[string]string)
 			}
-			dep.Spec.Template.ObjectMeta.Annotations["image.policy.ignore"] = "true"
+			dep.Spec.Template.Annotations["image.policy.ignore"] = "true"
 
 			return nil
 		}
