@@ -21,6 +21,8 @@ func CheckRemediation(ctx context.Context, c client.Client, vulnerabilityID, tar
 		return checkK02(ctx, c, targetResource, namespace)
 	case "K03":
 		return checkK03(ctx, c, targetResource, namespace)
+	case "K06":
+		return checkK06(ctx, c, targetResource, namespace)
 	default:
 		return false, fmt.Errorf("unknown vulnerability ID for remediation check: %s", vulnerabilityID)
 	}
@@ -167,4 +169,94 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 
 	logger.Info("K03 vulnerability remediated: overpermissive RBAC resources removed", "target", targetDeployment)
 	return true, nil
+}
+
+// checkK06 verifies if the authentication vulnerability has been fixed
+func checkK06(ctx context.Context, c client.Client, targetDeployment, namespace string) (bool, error) {
+	logger := log.FromContext(ctx)
+
+	// Get the deployment
+	dep := &appsv1.Deployment{}
+	err := c.Get(ctx, client.ObjectKey{Name: targetDeployment, Namespace: namespace}, dep)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// The deployment was deleted, which is a valid fix
+			logger.Info("K06 vulnerability remediated: target deployment was deleted", "target", targetDeployment)
+			return true, nil
+		}
+		return false, fmt.Errorf("failed to get deployment %s: %w", targetDeployment, err)
+	}
+
+	container := dep.Spec.Template.Spec.Containers[0]
+	vulnerabilitiesFound := false
+
+	// Check for auto-mounted service account tokens
+	if dep.Spec.Template.Spec.AutomountServiceAccountToken != nil && *dep.Spec.Template.Spec.AutomountServiceAccountToken {
+		logger.Info("K06 vulnerability still active: service account token auto-mounting enabled", "target", targetDeployment)
+		vulnerabilitiesFound = true
+	}
+
+	// Check for hardcoded credentials (look for values that should be from secrets)
+	for _, env := range container.Env {
+		if env.ValueFrom == nil && env.Value != "" {
+			// Check for common secret-like patterns
+			if containsSensitiveValue(env.Name, env.Value) {
+				logger.Info("K06 vulnerability still active: hardcoded credentials found", "target", targetDeployment, "env", env.Name)
+				vulnerabilitiesFound = true
+				break
+			}
+		}
+	}
+
+	// Check for default service account usage (empty serviceAccountName)
+	if dep.Spec.Template.Spec.ServiceAccountName == "" {
+		logger.Info("K06 vulnerability still active: using default service account", "target", targetDeployment)
+		vulnerabilitiesFound = true
+	}
+
+	// Check for exposed authentication environment variables
+	for _, env := range container.Env {
+		if isExposedAuthEnv(env.Name, env.Value) {
+			logger.Info("K06 vulnerability still active: exposed authentication token", "target", targetDeployment, "env", env.Name)
+			vulnerabilitiesFound = true
+			break
+		}
+	}
+
+	if vulnerabilitiesFound {
+		return false, nil
+	}
+
+	logger.Info("K06 vulnerability remediated: authentication configuration is now secure", "target", targetDeployment)
+	return true, nil
+}
+
+// containsSensitiveValue checks if an environment variable contains sensitive hardcoded values
+func containsSensitiveValue(name, value string) bool {
+	// Check for database credentials that should be from secrets
+	if name == "POSTGRES_USER" && value == "appuser" {
+		return true
+	}
+	if name == "POSTGRES_PASSWORD" && value == "apppassword" {
+		return true
+	}
+	if name == "API_KEY" && value == "sk_test_12345" {
+		return true
+	}
+	return false
+}
+
+// isExposedAuthEnv checks if an environment variable exposes authentication tokens
+func isExposedAuthEnv(name, value string) bool {
+	sensitiveEnvNames := []string{
+		"JWT_SECRET", "API_TOKEN", "AUTH_KEY", "SESSION_SECRET",
+		"STRIPE_SECRET", "WEBHOOK_SECRET", "AUTH_TOKEN", "SECRET_KEY",
+	}
+
+	for _, sensitiveEnv := range sensitiveEnvNames {
+		if name == sensitiveEnv && value != "" {
+			return true
+		}
+	}
+	return false
 }

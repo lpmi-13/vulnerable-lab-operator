@@ -46,7 +46,11 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 		if err := applyK03ToStack(appStack, targetResource, namespace); err != nil {
 			return fmt.Errorf("failed to apply K03 vulnerability: %w", err)
 		}
-	// ... Add cases for K04, K06, K07, K08, K09, K10
+	case "K06":
+		if err := applyK06ToStack(appStack, targetResource); err != nil {
+			return fmt.Errorf("failed to apply K06 vulnerability: %w", err)
+		}
+	// ... Add cases for K07, K08, K09, K10
 	default:
 		return fmt.Errorf("unknown vulnerability ID: %s", vulnerabilityID)
 	}
@@ -393,6 +397,109 @@ func createNodeAccessRBAC(appStack []client.Object, namespace string) error {
 	}
 
 	return nil
+}
+
+// applyK06ToStack modifies the baseline stack to apply broken authentication vulnerabilities
+func applyK06ToStack(appStack []client.Object, targetDeployment string) error {
+	// Find and modify the target deployment within the stack
+	for _, obj := range appStack {
+		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
+			// Randomly choose one of four K06 vulnerability types
+			localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
+			vulnType := localRand.Intn(4)
+
+			switch vulnType {
+			case 0: // Auto-mount service account tokens
+				dep.Spec.Template.Spec.AutomountServiceAccountToken = ptr.To(true)
+				// Add annotation that looks legitimate
+				if dep.Spec.Template.Annotations == nil {
+					dep.Spec.Template.Annotations = make(map[string]string)
+				}
+				dep.Spec.Template.Annotations["kubernetes.io/service-account.token"] = "required"
+
+			case 1: // Hardcoded credentials in environment (replace SecretKeyRef with plain values)
+				container := &dep.Spec.Template.Spec.Containers[0]
+				if err := replaceSecretsWithPlaintext(container, targetDeployment); err != nil {
+					return err
+				}
+
+			case 2: // Default service account usage (remove explicit serviceAccountName)
+				dep.Spec.Template.Spec.ServiceAccountName = ""
+				// Add annotation that looks like a temporary override
+				if dep.Spec.Template.Annotations == nil {
+					dep.Spec.Template.Annotations = make(map[string]string)
+				}
+				dep.Spec.Template.Annotations["auth.kubernetes.io/default-account"] = "temporary"
+
+			case 3: // Exposed authentication headers in environment
+				container := &dep.Spec.Template.Spec.Containers[0]
+				addExposedAuthEnvironment(container, targetDeployment)
+			}
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
+}
+
+// replaceSecretsWithPlaintext converts SecretKeyRef to plain environment variables
+func replaceSecretsWithPlaintext(container *corev1.Container, deploymentName string) error {
+	for i, env := range container.Env {
+		if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
+			// Replace secret references with hardcoded values based on the secret
+			var plainValue string
+			switch {
+			case env.ValueFrom.SecretKeyRef.Name == "postgres-credentials" && env.ValueFrom.SecretKeyRef.Key == "username":
+				plainValue = "appuser"
+			case env.ValueFrom.SecretKeyRef.Name == "postgres-credentials" && env.ValueFrom.SecretKeyRef.Key == "password":
+				plainValue = "apppassword"
+			case env.ValueFrom.SecretKeyRef.Name == "payment-api-key" && env.ValueFrom.SecretKeyRef.Key == "key":
+				plainValue = "sk_test_12345"
+			default:
+				continue // Skip unknown secrets
+			}
+
+			// Replace with plain value
+			container.Env[i] = corev1.EnvVar{
+				Name:  env.Name,
+				Value: plainValue,
+			}
+		}
+	}
+	return nil
+}
+
+// addExposedAuthEnvironment adds authentication tokens as plain environment variables
+func addExposedAuthEnvironment(container *corev1.Container, deploymentName string) {
+	// Add different auth tokens based on deployment type
+	var authEnvs []corev1.EnvVar
+
+	switch deploymentName {
+	case "api":
+		authEnvs = []corev1.EnvVar{
+			{Name: "JWT_SECRET", Value: "super-secret-jwt-key-123"},
+			{Name: "API_TOKEN", Value: "bearer-token-abcdef123456"},
+		}
+	case "user-service":
+		authEnvs = []corev1.EnvVar{
+			{Name: "AUTH_KEY", Value: "user-service-auth-key-789"},
+			{Name: "SESSION_SECRET", Value: "session-secret-xyz789"},
+		}
+	case "payment-service":
+		authEnvs = []corev1.EnvVar{
+			{Name: "STRIPE_SECRET", Value: "sk_live_dangerous_key_456"},
+			{Name: "WEBHOOK_SECRET", Value: "whsec_payment_webhook_secret"},
+		}
+	default:
+		authEnvs = []corev1.EnvVar{
+			{Name: "AUTH_TOKEN", Value: "generic-auth-token-123"},
+			{Name: "SECRET_KEY", Value: "hardcoded-secret-key-456"},
+		}
+	}
+
+	// Append authentication environment variables
+	container.Env = append(container.Env, authEnvs...)
 }
 
 // The old functions below are no longer used - they've been replaced by the ToStack variants above
