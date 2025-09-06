@@ -2,6 +2,7 @@ package breaker
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -30,6 +31,8 @@ func CheckRemediation(ctx context.Context, c client.Client, vulnerabilityID, tar
 		return checkK06(ctx, c, targetResource, namespace)
 	case "K07":
 		return checkK07(ctx, c, targetResource, namespace)
+	case "K08":
+		return checkK08(ctx, c, targetResource, namespace)
 	default:
 		return false, fmt.Errorf("unknown vulnerability ID for remediation check: %s", vulnerabilityID)
 	}
@@ -345,4 +348,161 @@ func checkK07(ctx context.Context, c client.Client, targetDeployment, namespace 
 
 	logger.Info("K07 vulnerability remediated: network segmentation controls are in place", "target", targetDeployment)
 	return true, nil
+}
+
+// checkK08 verifies if the secrets management vulnerability has been fixed
+func checkK08(ctx context.Context, c client.Client, targetDeployment, namespace string) (bool, error) {
+	logger := log.FromContext(ctx)
+
+	// Get the deployment to check for hardcoded secrets and insecure configurations
+	dep := &appsv1.Deployment{}
+	err := c.Get(ctx, client.ObjectKey{Name: targetDeployment, Namespace: namespace}, dep)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// The deployment was deleted, which is a valid fix
+			logger.Info("K08 vulnerability remediated: target deployment was deleted", "target", targetDeployment)
+			return true, nil
+		}
+		return false, fmt.Errorf("failed to get deployment %s: %w", targetDeployment, err)
+	}
+
+	vulnerabilitiesFound := false
+	container := dep.Spec.Template.Spec.Containers[0]
+
+	// Check for hardcoded secrets in environment variables
+	for _, env := range container.Env {
+		if env.ValueFrom == nil && env.Value != "" {
+			if isHardcodedSecret(env.Name, env.Value) {
+				logger.Info("K08 vulnerability still active: hardcoded secret found", "target", targetDeployment, "env", env.Name)
+				vulnerabilitiesFound = true
+				break
+			}
+		}
+	}
+
+	// Check for insecure volume permissions
+	for _, volume := range dep.Spec.Template.Spec.Volumes {
+		if volume.Secret != nil && volume.Secret.DefaultMode != nil {
+			mode := *volume.Secret.DefaultMode
+			if mode&0077 != 0 { // World or group readable
+				logger.Info("K08 vulnerability still active: insecure secret volume permissions", "target", targetDeployment, "mode", fmt.Sprintf("%o", mode))
+				vulnerabilitiesFound = true
+				break
+			}
+		}
+	}
+
+	// Check for secrets stored in ConfigMaps
+	configMapList := &corev1.ConfigMapList{}
+	err = c.List(ctx, configMapList, client.InNamespace(namespace))
+	if err != nil {
+		return false, fmt.Errorf("failed to list ConfigMaps: %w", err)
+	}
+
+	for _, cm := range configMapList.Items {
+		if strings.Contains(cm.Name, targetDeployment) {
+			// Check if ConfigMap contains secret-like data
+			for key, value := range cm.Data {
+				if isSecretData(key, value) {
+					logger.Info("K08 vulnerability still active: secrets found in ConfigMap", "target", targetDeployment, "configmap", cm.Name, "key", key)
+					vulnerabilitiesFound = true
+					break
+				}
+			}
+		}
+		if vulnerabilitiesFound {
+			break
+		}
+	}
+
+	// Check for base64 exposed secrets
+	secretList := &corev1.SecretList{}
+	err = c.List(ctx, secretList, client.InNamespace(namespace))
+	if err != nil {
+		return false, fmt.Errorf("failed to list Secrets: %w", err)
+	}
+
+	for _, secret := range secretList.Items {
+		// Check if secret uses Data field with base64 encoding exposed
+		if secret.StringData == nil && secret.Data != nil {
+			for key, data := range secret.Data {
+				// Check if the data looks like double-encoded base64 (vulnerability)
+				if decoded, err := base64.StdEncoding.DecodeString(string(data)); err == nil {
+					if isSecretData(key, string(decoded)) {
+						logger.Info("K08 vulnerability still active: base64 exposed secret", "target", targetDeployment, "secret", secret.Name, "key", key)
+						vulnerabilitiesFound = true
+						break
+					}
+				}
+			}
+		}
+		if vulnerabilitiesFound {
+			break
+		}
+	}
+
+	// Check annotations that indicate vulnerable configurations
+	if dep.Spec.Template.Annotations != nil {
+		if _, exists := dep.Spec.Template.Annotations["config.kubernetes.io/hardcoded-secrets"]; exists {
+			logger.Info("K08 vulnerability still active: hardcoded secrets annotation found", "target", targetDeployment)
+			vulnerabilitiesFound = true
+		}
+		if _, exists := dep.Spec.Template.Annotations["security.kubernetes.io/volume-permissions"]; exists {
+			logger.Info("K08 vulnerability still active: insecure volume permissions annotation found", "target", targetDeployment)
+			vulnerabilitiesFound = true
+		}
+	}
+
+	if vulnerabilitiesFound {
+		return false, nil
+	}
+
+	logger.Info("K08 vulnerability remediated: secrets management is now secure", "target", targetDeployment)
+	return true, nil
+}
+
+// isHardcodedSecret checks if an environment variable contains a hardcoded secret
+func isHardcodedSecret(name, value string) bool {
+	// Check for common secret patterns
+	secretPatterns := map[string][]string{
+		"JWT_SECRET":     {"super-secure-jwt-signing-key-2024"},
+		"REDIS_PASSWORD": {"redis-secure-password-123"},
+		"API_KEY":        {"sk_test_12345", "sk_live_"},
+	}
+
+	if patterns, exists := secretPatterns[name]; exists {
+		for _, pattern := range patterns {
+			if strings.Contains(value, pattern) {
+				return true
+			}
+		}
+	}
+
+	// Generic secret detection
+	if strings.Contains(strings.ToLower(name), "secret") ||
+		strings.Contains(strings.ToLower(name), "password") ||
+		strings.Contains(strings.ToLower(name), "key") {
+		if len(value) > 8 && !strings.Contains(value, ":") { // Avoid URLs
+			return true
+		}
+	}
+
+	return false
+}
+
+// isSecretData checks if a key-value pair contains secret-like data
+func isSecretData(key, value string) bool {
+	secretKeys := []string{
+		"jwt-secret", "redis-password", "database-url", "api-key",
+		"password", "secret", "key", "token", "auth",
+	}
+
+	keyLower := strings.ToLower(key)
+	for _, secretKey := range secretKeys {
+		if strings.Contains(keyLower, secretKey) {
+			return len(value) > 5 // Assume secrets are longer than 5 chars
+		}
+	}
+
+	return false
 }

@@ -2,6 +2,7 @@ package breaker
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"math/rand"
 	"time"
@@ -58,7 +59,11 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 		if err := applyK07ToStack(appStack, targetResource, namespace); err != nil {
 			return fmt.Errorf("failed to apply K07 vulnerability: %w", err)
 		}
-	// ... Add cases for K08, K09, K10
+	case "K08":
+		if err := applyK08ToStack(appStack, targetResource, namespace); err != nil {
+			return fmt.Errorf("failed to apply K08 vulnerability: %w", err)
+		}
+	// ... Add cases for K09, K10
 	default:
 		return fmt.Errorf("unknown vulnerability ID: %s", vulnerabilityID)
 	}
@@ -666,6 +671,203 @@ func createCrossNamespaceService(appStack []client.Object, targetDeployment, nam
 		}
 	}
 
+	return nil
+}
+
+// applyK08ToStack modifies the baseline stack to apply secrets management vulnerabilities
+func applyK08ToStack(appStack []client.Object, targetDeployment, namespace string) error {
+	// Randomly choose one of four K08 vulnerability types
+	localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
+	vulnType := localRand.Intn(4)
+
+	switch vulnType {
+	case 0: // Hardcoded secrets in environment variables
+		if err := replaceSecretsWithHardcoded(appStack, targetDeployment); err != nil {
+			return err
+		}
+
+	case 1: // Insecure volume permissions
+		if err := makeSecretVolumeInsecure(appStack, targetDeployment); err != nil {
+			return err
+		}
+
+	case 2: // Secret data in ConfigMaps
+		if err := moveSecretsToConfigMap(appStack, targetDeployment, namespace); err != nil {
+			return err
+		}
+
+	case 3: // Base64 encoded secrets (visible)
+		if err := exposeSecretsAsBase64(appStack, targetDeployment); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// replaceSecretsWithHardcoded converts secret references to plain environment variables
+func replaceSecretsWithHardcoded(appStack []client.Object, targetDeployment string) error {
+	for _, obj := range appStack {
+		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
+			container := &dep.Spec.Template.Spec.Containers[0]
+
+			// Replace secret references with hardcoded values
+			for i, env := range container.Env {
+				if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
+					// Convert secret reference to hardcoded value
+					var plainValue string
+					switch {
+					case env.ValueFrom.SecretKeyRef.Name == "jwt-secret" || env.Name == "JWT_SECRET":
+						plainValue = "super-secure-jwt-signing-key-2024"
+					case env.ValueFrom.SecretKeyRef.Name == "redis-password" || env.Name == "REDIS_PASSWORD":
+						plainValue = "redis-secure-password-123"
+					case env.ValueFrom.SecretKeyRef.Name == "payment-api-key" || env.Name == "API_KEY":
+						plainValue = "sk_test_12345"
+					default:
+						continue
+					}
+
+					// Replace with hardcoded value
+					container.Env[i] = corev1.EnvVar{
+						Name:  env.Name,
+						Value: plainValue,
+					}
+				}
+			}
+
+			// Add annotation indicating this was done for convenience (looks legitimate)
+			if dep.Spec.Template.Annotations == nil {
+				dep.Spec.Template.Annotations = make(map[string]string)
+			}
+			dep.Spec.Template.Annotations["config.kubernetes.io/hardcoded-secrets"] = "development-mode"
+			return nil
+		}
+	}
+	return fmt.Errorf("target deployment %s not found", targetDeployment)
+}
+
+// makeSecretVolumeInsecure changes secret volume permissions to world-readable
+func makeSecretVolumeInsecure(appStack []client.Object, targetDeployment string) error {
+	for _, obj := range appStack {
+		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
+			// Find and modify secret volumes
+			for i, volume := range dep.Spec.Template.Spec.Volumes {
+				if volume.Secret != nil {
+					// Make secret volume world-readable
+					dep.Spec.Template.Spec.Volumes[i].Secret.DefaultMode = ptr.To(int32(0777))
+				}
+			}
+
+			// Add annotation that looks like troubleshooting
+			if dep.Spec.Template.Annotations == nil {
+				dep.Spec.Template.Annotations = make(map[string]string)
+			}
+			dep.Spec.Template.Annotations["security.kubernetes.io/volume-permissions"] = "debugging-enabled"
+			return nil
+		}
+	}
+	return fmt.Errorf("target deployment %s not found", targetDeployment)
+}
+
+// moveSecretsToConfigMap creates a ConfigMap with secret data instead of using Secrets
+func moveSecretsToConfigMap(appStack []client.Object, targetDeployment, namespace string) error {
+	// Create a ConfigMap with sensitive data
+	insecureConfigMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-config", targetDeployment),
+			Namespace: namespace,
+			Annotations: map[string]string{
+				"config.kubernetes.io/contains-secrets": "true",
+			},
+		},
+		Data: map[string]string{
+			"jwt-secret":     "super-secure-jwt-signing-key-2024",
+			"redis-password": "redis-secure-password-123",
+			"database-url":   "postgres://appuser:apppassword@postgres-service:5432/appdb",
+			"api-key":        "sk_test_12345",
+		},
+	}
+
+	// Find the target deployment and modify it to use ConfigMap
+	for _, obj := range appStack {
+		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
+			container := &dep.Spec.Template.Spec.Containers[0]
+
+			// Add ConfigMap environment variables
+			configEnvs := []corev1.EnvVar{
+				{
+					Name: "JWT_SECRET_FROM_CONFIG",
+					ValueFrom: &corev1.EnvVarSource{
+						ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: insecureConfigMap.Name,
+							},
+							Key: "jwt-secret",
+						},
+					},
+				},
+				{
+					Name: "API_KEY_FROM_CONFIG",
+					ValueFrom: &corev1.EnvVarSource{
+						ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: insecureConfigMap.Name,
+							},
+							Key: "api-key",
+						},
+					},
+				},
+			}
+
+			// Add the config-based environment variables
+			container.Env = append(container.Env, configEnvs...)
+			break
+		}
+	}
+
+	// Add the ConfigMap to the stack
+	for i, obj := range appStack {
+		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
+			// Insert ConfigMap right after the deployment
+			appStack = append(appStack[:i+1], append([]client.Object{insecureConfigMap}, appStack[i+1:]...)...)
+			break
+		}
+	}
+
+	return nil
+}
+
+// exposeSecretsAsBase64 changes StringData to Data to expose base64 encoding
+func exposeSecretsAsBase64(appStack []client.Object, targetDeployment string) error {
+
+	for _, obj := range appStack {
+		if secret, ok := obj.(*corev1.Secret); ok {
+			// Look for secrets related to the target deployment
+			if secret.Name == "api-secrets" || secret.Name == "redis-auth" || secret.Name == "payment-api-key" {
+				// Convert StringData to Data (exposes base64 encoding)
+				if secret.StringData != nil {
+					if secret.Data == nil {
+						secret.Data = make(map[string][]byte)
+					}
+
+					// Convert all StringData to base64 Data
+					for key, value := range secret.StringData {
+						secret.Data[key] = []byte(base64.StdEncoding.EncodeToString([]byte(value)))
+					}
+
+					// Clear StringData to force use of Data field
+					secret.StringData = nil
+				}
+
+				// Add annotation indicating this exposes secrets
+				if secret.Annotations == nil {
+					secret.Annotations = make(map[string]string)
+				}
+				secret.Annotations["encoding.kubernetes.io/format"] = "base64-visible"
+				break
+			}
+		}
+	}
 	return nil
 }
 
