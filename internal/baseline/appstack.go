@@ -471,6 +471,28 @@ scrape_configs:
 										Name:  "PAYMENT_SERVICE_URL",
 										Value: "http://payment-service-svc:8091",
 									},
+									{
+										Name: "JWT_SECRET",
+										ValueFrom: &corev1.EnvVarSource{
+											SecretKeyRef: &corev1.SecretKeySelector{
+												LocalObjectReference: corev1.LocalObjectReference{
+													Name: "api-secrets",
+												},
+												Key: "jwt-secret",
+											},
+										},
+									},
+									{
+										Name: "REDIS_PASSWORD",
+										ValueFrom: &corev1.EnvVarSource{
+											SecretKeyRef: &corev1.SecretKeySelector{
+												LocalObjectReference: corev1.LocalObjectReference{
+													Name: "redis-auth",
+												},
+												Key: "password",
+											},
+										},
+									},
 								},
 								SecurityContext: getSecureSecurityContext(1000), // node user
 								Resources: corev1.ResourceRequirements{
@@ -559,6 +581,24 @@ scrape_configs:
 									Limits: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("128Mi"),
 										corev1.ResourceCPU:    resource.MustParse("100m"),
+									},
+								},
+								VolumeMounts: []corev1.VolumeMount{
+									{
+										Name:      "user-config",
+										MountPath: "/etc/secrets",
+										ReadOnly:  true,
+									},
+								},
+							},
+						},
+						Volumes: []corev1.Volume{
+							{
+								Name: "user-config",
+								VolumeSource: corev1.VolumeSource{
+									Secret: &corev1.SecretVolumeSource{
+										SecretName:  "api-secrets",
+										DefaultMode: ptr.To(int32(0400)),
 									},
 								},
 							},
@@ -682,6 +722,45 @@ scrape_configs:
 				"key": "sk_test_12345",
 			},
 			Type: corev1.SecretTypeOpaque,
+		},
+
+		// API Service Secrets
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "api-secrets",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "backend"},
+			},
+			StringData: map[string]string{
+				"jwt-secret": "super-secure-jwt-signing-key-2024",
+			},
+			Type: corev1.SecretTypeOpaque,
+		},
+
+		// Redis Authentication Secret
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "redis-auth",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "cache"},
+			},
+			StringData: map[string]string{
+				"password": "redis-secure-password-123",
+			},
+			Type: corev1.SecretTypeOpaque,
+		},
+
+		// TLS Certificates Secret
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "tls-certificates",
+				Namespace: namespace,
+			},
+			StringData: map[string]string{
+				"tls.crt": "-----BEGIN CERTIFICATE-----\nMIICDzCCAXgCAQAwDQYJKoZIhvcNAQEFBQAwFTETMBEGA1UEAwwKbXlkb21haW4u\n...\n-----END CERTIFICATE-----",
+				"tls.key": "-----BEGIN PRIVATE KEY-----\nMIICdwIBADANBgkqhkiG9w0BAQEFAASCAmEwggJdAgEAAoGBAK9Z...\n-----END PRIVATE KEY-----",
+			},
+			Type: corev1.SecretTypeTLS,
 		},
 
 		// 9. Web App Frontend
