@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -74,7 +75,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	logger.Info("Initializing new lab environment", "namespace", namespace)
 
 	// Randomly choose a vulnerability type
-	vulnerabilities := []string{"K01", "K02"}
+	vulnerabilities := []string{"K01", "K02", "K03", "K06", "K07", "K08"}
 	vulnIndex := r.selectRandomIndex(len(vulnerabilities))
 	chosenVuln := vulnerabilities[vulnIndex]
 
@@ -85,6 +86,14 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 		viableTargets = []string{"api", "webapp", "redis-cache", "prometheus", "grafana", "postgres-db", "user-service", "payment-service"}
 	case "K02":
 		viableTargets = []string{"api", "webapp", "user-service", "payment-service", "grafana"}
+	case "K03":
+		viableTargets = []string{"api", "user-service", "payment-service"} // Services that need RBAC permissions
+	case "K06":
+		viableTargets = []string{"api", "user-service", "payment-service"} // Services that use secrets
+	case "K07":
+		viableTargets = []string{"api", "webapp", "user-service", "payment-service"} // Services affected by network policies
+	case "K08":
+		viableTargets = []string{"api", "user-service", "payment-service"} // Services that use secrets
 	default:
 		viableTargets = []string{"api", "webapp"}
 	}
@@ -124,6 +133,10 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	}
 
 	logger.Info("Lab initialization complete", "vulnerability", chosenVuln, "target", targetDeployment)
+
+	// Update cluster status file for user visibility
+	r.writeClusterStatus("Ready for scanning")
+
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
@@ -157,6 +170,9 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.VulnerableLab, namespace string) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Resetting lab", "namespace", namespace)
+
+	// Update cluster status file for user visibility
+	r.writeClusterStatus("Resetting cluster")
 
 	// Check if the namespace exists
 	var ns corev1.Namespace
@@ -213,6 +229,10 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 	}
 
 	logger.Info("Lab reset complete, will initialize new challenge")
+
+	// Update cluster status file - reset complete means ready for next scan
+	r.writeClusterStatus("Ready for scanning")
+
 	return ctrl.Result{Requeue: true}, nil
 }
 
@@ -223,6 +243,15 @@ func (r *VulnerableLabReconciler) selectRandomIndex(arrayLength int) int {
 	// Create a simple pseudo-random generator
 	localRand := rand.New(rand.NewSource(now))
 	return localRand.Intn(arrayLength)
+}
+
+// writeClusterStatus writes a simple status message to /tmp/cluster-status for user visibility
+func (r *VulnerableLabReconciler) writeClusterStatus(status string) {
+	err := os.WriteFile("/tmp/cluster-status", []byte(status), 0644)
+	if err != nil {
+		// Log error but don't fail reconciliation
+		ctrl.Log.WithName("status-file").Error(err, "Failed to write cluster status file")
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

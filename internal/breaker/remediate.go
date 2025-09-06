@@ -250,7 +250,7 @@ func containsSensitiveValue(name, value string) bool {
 	if name == "POSTGRES_PASSWORD" && value == "apppassword" {
 		return true
 	}
-	if name == "API_KEY" && value == "sk_test_12345" {
+	if name == "API_KEY" && value == testAPIKey {
 		return true
 	}
 	return false

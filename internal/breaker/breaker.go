@@ -20,6 +20,12 @@ import (
 	"github.com/lpmi-13/vulnerable-lab-operator/internal/baseline"
 )
 
+// Constants for commonly used strings
+const (
+	paymentAPIKeySecret = "payment-api-key"
+	testAPIKey          = "sk_test_12345"
+)
+
 // BreakCluster applies the specified vulnerability to the cluster using build-with-vulnerabilities approach
 func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, targetResource, namespace string) error {
 	logger := log.FromContext(ctx)
@@ -258,7 +264,7 @@ func createClusterAdminRBAC(appStack []client.Object, namespace string) error {
 	for i, obj := range appStack {
 		if _, ok := obj.(*corev1.ServiceAccount); ok {
 			// Insert binding right after service account
-			appStack = append(appStack[:i+1], append([]client.Object{binding}, appStack[i+1:]...)...)
+			_ = append(appStack[:i+1], append([]client.Object{binding}, appStack[i+1:]...)...)
 			break
 		}
 	}
@@ -306,7 +312,7 @@ func createSecretAccessRBAC(appStack []client.Object, namespace string) error {
 	for i, obj := range appStack {
 		if _, ok := obj.(*corev1.ServiceAccount); ok {
 			// Insert role and binding right after service account
-			appStack = append(appStack[:i+1], append([]client.Object{role, binding}, appStack[i+1:]...)...)
+			_ = append(appStack[:i+1], append([]client.Object{role, binding}, appStack[i+1:]...)...)
 			break
 		}
 	}
@@ -356,7 +362,7 @@ func createCrossNamespaceRBAC(appStack []client.Object, namespace string) error 
 	for i, obj := range appStack {
 		if _, ok := obj.(*corev1.ServiceAccount); ok {
 			// Insert role and binding right after service account
-			appStack = append(appStack[:i+1], append([]client.Object{role, binding}, appStack[i+1:]...)...)
+			_ = append(appStack[:i+1], append([]client.Object{role, binding}, appStack[i+1:]...)...)
 			break
 		}
 	}
@@ -404,7 +410,7 @@ func createNodeAccessRBAC(appStack []client.Object, namespace string) error {
 	for i, obj := range appStack {
 		if _, ok := obj.(*corev1.ServiceAccount); ok {
 			// Insert role and binding right after service account
-			appStack = append(appStack[:i+1], append([]client.Object{role, binding}, appStack[i+1:]...)...)
+			_ = append(appStack[:i+1], append([]client.Object{role, binding}, appStack[i+1:]...)...)
 			break
 		}
 	}
@@ -457,7 +463,7 @@ func applyK06ToStack(appStack []client.Object, targetDeployment string) error {
 }
 
 // replaceSecretsWithPlaintext converts SecretKeyRef to plain environment variables
-func replaceSecretsWithPlaintext(container *corev1.Container, deploymentName string) error {
+func replaceSecretsWithPlaintext(container *corev1.Container, _ string) error {
 	for i, env := range container.Env {
 		if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
 			// Replace secret references with hardcoded values based on the secret
@@ -467,8 +473,8 @@ func replaceSecretsWithPlaintext(container *corev1.Container, deploymentName str
 				plainValue = "appuser"
 			case env.ValueFrom.SecretKeyRef.Name == "postgres-credentials" && env.ValueFrom.SecretKeyRef.Key == "password":
 				plainValue = "apppassword"
-			case env.ValueFrom.SecretKeyRef.Name == "payment-api-key" && env.ValueFrom.SecretKeyRef.Key == "key":
-				plainValue = "sk_test_12345"
+			case env.ValueFrom.SecretKeyRef.Name == paymentAPIKeySecret && env.ValueFrom.SecretKeyRef.Key == "key":
+				plainValue = testAPIKey
 			default:
 				continue // Skip unknown secrets
 			}
@@ -593,7 +599,7 @@ func createExposedDatabaseService(appStack []client.Object, namespace string) er
 	for i, obj := range appStack {
 		if svc, ok := obj.(*corev1.Service); ok && svc.Name == "postgres-service" {
 			// Insert exposed service right after the regular postgres service
-			appStack = append(appStack[:i+1], append([]client.Object{exposedService}, appStack[i+1:]...)...)
+			_ = append(appStack[:i+1], append([]client.Object{exposedService}, appStack[i+1:]...)...)
 			break
 		}
 	}
@@ -630,7 +636,7 @@ func createBypassService(appStack []client.Object, targetDeployment, namespace s
 	for i, obj := range appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
 			// Insert bypass service right after the target deployment
-			appStack = append(appStack[:i+1], append([]client.Object{bypassService}, appStack[i+1:]...)...)
+			_ = append(appStack[:i+1], append([]client.Object{bypassService}, appStack[i+1:]...)...)
 			break
 		}
 	}
@@ -666,7 +672,7 @@ func createCrossNamespaceService(appStack []client.Object, targetDeployment, nam
 	for i, obj := range appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
 			// Insert cross-ns service right after the target deployment
-			appStack = append(appStack[:i+1], append([]client.Object{crossNsService}, appStack[i+1:]...)...)
+			_ = append(appStack[:i+1], append([]client.Object{crossNsService}, appStack[i+1:]...)...)
 			break
 		}
 	}
@@ -721,8 +727,8 @@ func replaceSecretsWithHardcoded(appStack []client.Object, targetDeployment stri
 						plainValue = "super-secure-jwt-signing-key-2024"
 					case env.ValueFrom.SecretKeyRef.Name == "redis-password" || env.Name == "REDIS_PASSWORD":
 						plainValue = "redis-secure-password-123"
-					case env.ValueFrom.SecretKeyRef.Name == "payment-api-key" || env.Name == "API_KEY":
-						plainValue = "sk_test_12345"
+					case env.ValueFrom.SecretKeyRef.Name == paymentAPIKeySecret || env.Name == "API_KEY":
+						plainValue = testAPIKey
 					default:
 						continue
 					}
@@ -784,7 +790,7 @@ func moveSecretsToConfigMap(appStack []client.Object, targetDeployment, namespac
 			"jwt-secret":     "super-secure-jwt-signing-key-2024",
 			"redis-password": "redis-secure-password-123",
 			"database-url":   "postgres://appuser:apppassword@postgres-service:5432/appdb",
-			"api-key":        "sk_test_12345",
+			"api-key":        testAPIKey,
 		},
 	}
 
@@ -829,7 +835,7 @@ func moveSecretsToConfigMap(appStack []client.Object, targetDeployment, namespac
 	for i, obj := range appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
 			// Insert ConfigMap right after the deployment
-			appStack = append(appStack[:i+1], append([]client.Object{insecureConfigMap}, appStack[i+1:]...)...)
+			_ = append(appStack[:i+1], append([]client.Object{insecureConfigMap}, appStack[i+1:]...)...)
 			break
 		}
 	}
@@ -838,12 +844,12 @@ func moveSecretsToConfigMap(appStack []client.Object, targetDeployment, namespac
 }
 
 // exposeSecretsAsBase64 changes StringData to Data to expose base64 encoding
-func exposeSecretsAsBase64(appStack []client.Object, targetDeployment string) error {
+func exposeSecretsAsBase64(appStack []client.Object, _ string) error {
 
 	for _, obj := range appStack {
 		if secret, ok := obj.(*corev1.Secret); ok {
 			// Look for secrets related to the target deployment
-			if secret.Name == "api-secrets" || secret.Name == "redis-auth" || secret.Name == "payment-api-key" {
+			if secret.Name == "api-secrets" || secret.Name == "redis-auth" || secret.Name == paymentAPIKeySecret {
 				// Convert StringData to Data (exposes base64 encoding)
 				if secret.StringData != nil {
 					if secret.Data == nil {
