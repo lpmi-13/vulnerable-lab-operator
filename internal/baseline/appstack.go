@@ -803,6 +803,470 @@ scrape_configs:
 				},
 			},
 		},
+
+		// Network Policies for proper segmentation
+		// API Network Policy - allows bidirectional traffic with backend services and data stores
+		&networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "api-network-policy",
+				Namespace: namespace,
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "api"},
+				},
+				PolicyTypes: []networkingv1.PolicyType{
+					networkingv1.PolicyTypeIngress,
+					networkingv1.PolicyTypeEgress,
+				},
+				Ingress: []networkingv1.NetworkPolicyIngressRule{
+					{
+						From: []networkingv1.NetworkPolicyPeer{
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "webapp"},
+								},
+							},
+						},
+					},
+				},
+				Egress: []networkingv1.NetworkPolicyEgressRule{
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "redis-cache"},
+								},
+							},
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "postgres-db"},
+								},
+							},
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "user-service"},
+								},
+							},
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "payment-service"},
+								},
+							},
+						},
+					},
+					// Allow DNS resolution
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								NamespaceSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"name": "kube-system"},
+								},
+							},
+						},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{
+								Protocol: ptr.To(corev1.ProtocolUDP),
+								Port:     ptr.To(intstr.FromInt(53)),
+							},
+						},
+					},
+				},
+			},
+		},
+
+		// WebApp Network Policy - only communicates with API
+		&networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "webapp-network-policy",
+				Namespace: namespace,
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "webapp"},
+				},
+				PolicyTypes: []networkingv1.PolicyType{
+					networkingv1.PolicyTypeIngress,
+					networkingv1.PolicyTypeEgress,
+				},
+				Ingress: []networkingv1.NetworkPolicyIngressRule{
+					{
+						// Allow ingress traffic (from ingress controller)
+						From: []networkingv1.NetworkPolicyPeer{},
+					},
+				},
+				Egress: []networkingv1.NetworkPolicyEgressRule{
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "api"},
+								},
+							},
+						},
+					},
+					// Allow DNS resolution
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								NamespaceSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"name": "kube-system"},
+								},
+							},
+						},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{
+								Protocol: ptr.To(corev1.ProtocolUDP),
+								Port:     ptr.To(intstr.FromInt(53)),
+							},
+						},
+					},
+				},
+			},
+		},
+
+		// Prometheus Network Policy - receives metrics from services
+		&networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "prometheus-network-policy",
+				Namespace: namespace,
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "prometheus"},
+				},
+				PolicyTypes: []networkingv1.PolicyType{
+					networkingv1.PolicyTypeIngress,
+					networkingv1.PolicyTypeEgress,
+				},
+				Ingress: []networkingv1.NetworkPolicyIngressRule{
+					{
+						From: []networkingv1.NetworkPolicyPeer{
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "api"},
+								},
+							},
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "webapp"},
+								},
+							},
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "user-service"},
+								},
+							},
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "payment-service"},
+								},
+							},
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "grafana"},
+								},
+							},
+						},
+					},
+					// Allow ingress traffic (from ingress controller)
+					{
+						From: []networkingv1.NetworkPolicyPeer{},
+					},
+				},
+				Egress: []networkingv1.NetworkPolicyEgressRule{
+					// Allow DNS resolution
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								NamespaceSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"name": "kube-system"},
+								},
+							},
+						},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{
+								Protocol: ptr.To(corev1.ProtocolUDP),
+								Port:     ptr.To(intstr.FromInt(53)),
+							},
+						},
+					},
+				},
+			},
+		},
+
+		// Grafana Network Policy - communicates with prometheus
+		&networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "grafana-network-policy",
+				Namespace: namespace,
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "grafana"},
+				},
+				PolicyTypes: []networkingv1.PolicyType{
+					networkingv1.PolicyTypeIngress,
+					networkingv1.PolicyTypeEgress,
+				},
+				Ingress: []networkingv1.NetworkPolicyIngressRule{
+					{
+						// Allow ingress traffic (from ingress controller)
+						From: []networkingv1.NetworkPolicyPeer{},
+					},
+				},
+				Egress: []networkingv1.NetworkPolicyEgressRule{
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "prometheus"},
+								},
+							},
+						},
+					},
+					// Allow DNS resolution
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								NamespaceSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"name": "kube-system"},
+								},
+							},
+						},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{
+								Protocol: ptr.To(corev1.ProtocolUDP),
+								Port:     ptr.To(intstr.FromInt(53)),
+							},
+						},
+					},
+				},
+			},
+		},
+
+		// PostgreSQL Network Policy - only receives from backend services
+		&networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "postgres-network-policy",
+				Namespace: namespace,
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "postgres-db"},
+				},
+				PolicyTypes: []networkingv1.PolicyType{
+					networkingv1.PolicyTypeIngress,
+					networkingv1.PolicyTypeEgress,
+				},
+				Ingress: []networkingv1.NetworkPolicyIngressRule{
+					{
+						From: []networkingv1.NetworkPolicyPeer{
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "api"},
+								},
+							},
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "user-service"},
+								},
+							},
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "payment-service"},
+								},
+							},
+						},
+					},
+				},
+				Egress: []networkingv1.NetworkPolicyEgressRule{
+					// Allow DNS resolution
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								NamespaceSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"name": "kube-system"},
+								},
+							},
+						},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{
+								Protocol: ptr.To(corev1.ProtocolUDP),
+								Port:     ptr.To(intstr.FromInt(53)),
+							},
+						},
+					},
+				},
+			},
+		},
+
+		// Redis Network Policy - only receives from API
+		&networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "redis-network-policy",
+				Namespace: namespace,
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "redis-cache"},
+				},
+				PolicyTypes: []networkingv1.PolicyType{
+					networkingv1.PolicyTypeIngress,
+					networkingv1.PolicyTypeEgress,
+				},
+				Ingress: []networkingv1.NetworkPolicyIngressRule{
+					{
+						From: []networkingv1.NetworkPolicyPeer{
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "api"},
+								},
+							},
+						},
+					},
+				},
+				Egress: []networkingv1.NetworkPolicyEgressRule{
+					// Allow DNS resolution
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								NamespaceSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"name": "kube-system"},
+								},
+							},
+						},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{
+								Protocol: ptr.To(corev1.ProtocolUDP),
+								Port:     ptr.To(intstr.FromInt(53)),
+							},
+						},
+					},
+				},
+			},
+		},
+
+		// User Service Network Policy - communicates with API and database
+		&networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "user-service-network-policy",
+				Namespace: namespace,
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "user-service"},
+				},
+				PolicyTypes: []networkingv1.PolicyType{
+					networkingv1.PolicyTypeIngress,
+					networkingv1.PolicyTypeEgress,
+				},
+				Ingress: []networkingv1.NetworkPolicyIngressRule{
+					{
+						From: []networkingv1.NetworkPolicyPeer{
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "api"},
+								},
+							},
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "prometheus"},
+								},
+							},
+						},
+					},
+				},
+				Egress: []networkingv1.NetworkPolicyEgressRule{
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "postgres-db"},
+								},
+							},
+						},
+					},
+					// Allow DNS resolution
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								NamespaceSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"name": "kube-system"},
+								},
+							},
+						},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{
+								Protocol: ptr.To(corev1.ProtocolUDP),
+								Port:     ptr.To(intstr.FromInt(53)),
+							},
+						},
+					},
+				},
+			},
+		},
+
+		// Payment Service Network Policy - communicates with API and database
+		&networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "payment-service-network-policy",
+				Namespace: namespace,
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "payment-service"},
+				},
+				PolicyTypes: []networkingv1.PolicyType{
+					networkingv1.PolicyTypeIngress,
+					networkingv1.PolicyTypeEgress,
+				},
+				Ingress: []networkingv1.NetworkPolicyIngressRule{
+					{
+						From: []networkingv1.NetworkPolicyPeer{
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "api"},
+								},
+							},
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "prometheus"},
+								},
+							},
+						},
+					},
+				},
+				Egress: []networkingv1.NetworkPolicyEgressRule{
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								PodSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"app": "postgres-db"},
+								},
+							},
+						},
+					},
+					// Allow DNS resolution
+					{
+						To: []networkingv1.NetworkPolicyPeer{
+							{
+								NamespaceSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{"name": "kube-system"},
+								},
+							},
+						},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{
+								Protocol: ptr.To(corev1.ProtocolUDP),
+								Port:     ptr.To(intstr.FromInt(53)),
+							},
+						},
+					},
+				},
+			},
+		},
+
 		&corev1.ServiceAccount{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "restricted-sa",
