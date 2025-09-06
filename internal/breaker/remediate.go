@@ -3,8 +3,10 @@ package breaker
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 
@@ -26,6 +28,8 @@ func CheckRemediation(ctx context.Context, c client.Client, vulnerabilityID, tar
 	// rather than resource-level misconfigurations that can be demonstrated in this lab environment
 	case "K06":
 		return checkK06(ctx, c, targetResource, namespace)
+	case "K07":
+		return checkK07(ctx, c, targetResource, namespace)
 	default:
 		return false, fmt.Errorf("unknown vulnerability ID for remediation check: %s", vulnerabilityID)
 	}
@@ -262,4 +266,83 @@ func isExposedAuthEnv(name, value string) bool {
 		}
 	}
 	return false
+}
+
+// checkK07 verifies if the network segmentation vulnerability has been addressed
+func checkK07(ctx context.Context, c client.Client, targetDeployment, namespace string) (bool, error) {
+	logger := log.FromContext(ctx)
+
+	// Get the deployment to check annotations
+	dep := &appsv1.Deployment{}
+	err := c.Get(ctx, client.ObjectKey{Name: targetDeployment, Namespace: namespace}, dep)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// The deployment was deleted, which is a valid fix
+			logger.Info("K07 vulnerability remediated: target deployment was deleted", "target", targetDeployment)
+			return true, nil
+		}
+		return false, fmt.Errorf("failed to get deployment %s: %w", targetDeployment, err)
+	}
+
+	vulnerabilitiesFound := false
+
+	// Check for unrestricted pod communication annotations
+	if dep.Spec.Template.Annotations != nil {
+		if policy, exists := dep.Spec.Template.Annotations["networking.kubernetes.io/network-policy"]; exists && policy == "disabled" {
+			logger.Info("K07 vulnerability still active: network policy disabled", "target", targetDeployment)
+			vulnerabilitiesFound = true
+		}
+		if isolation, exists := dep.Spec.Template.Annotations["networking.kubernetes.io/isolation"]; exists && isolation == "none" {
+			logger.Info("K07 vulnerability still active: network isolation disabled", "target", targetDeployment)
+			vulnerabilitiesFound = true
+		}
+	}
+
+	// Check for problematic services that demonstrate poor network segmentation
+	problematicServices := []struct {
+		name   string
+		reason string
+	}{
+		{"database-direct-access", "exposed database service"},
+		{fmt.Sprintf("%s-bypass", targetDeployment), "ingress bypass service"},
+		{fmt.Sprintf("%s-cross-ns", targetDeployment), "cross-namespace service"},
+	}
+
+	for _, svcInfo := range problematicServices {
+		svc := &corev1.Service{}
+		err := c.Get(ctx, client.ObjectKey{Name: svcInfo.name, Namespace: namespace}, svc)
+		if err == nil {
+			// Service still exists - vulnerability is active
+			logger.Info("K07 vulnerability still active", "target", targetDeployment,
+				"service", svcInfo.name, "reason", svcInfo.reason)
+			vulnerabilitiesFound = true
+			break
+		} else if !errors.IsNotFound(err) {
+			// Unexpected error
+			return false, fmt.Errorf("failed to check service %s: %w", svcInfo.name, err)
+		}
+		// Service not found is good - it was deleted
+	}
+
+	// Additional check: look for NodePort services (potential bypass)
+	serviceList := &corev1.ServiceList{}
+	err = c.List(ctx, serviceList, client.InNamespace(namespace))
+	if err != nil {
+		return false, fmt.Errorf("failed to list services: %w", err)
+	}
+
+	for _, svc := range serviceList.Items {
+		if svc.Spec.Type == corev1.ServiceTypeNodePort && strings.Contains(svc.Name, "bypass") {
+			logger.Info("K07 vulnerability still active: NodePort bypass service found", "target", targetDeployment, "service", svc.Name)
+			vulnerabilitiesFound = true
+			break
+		}
+	}
+
+	if vulnerabilitiesFound {
+		return false, nil
+	}
+
+	logger.Info("K07 vulnerability remediated: network segmentation controls are in place", "target", targetDeployment)
+	return true, nil
 }

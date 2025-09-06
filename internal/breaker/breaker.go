@@ -11,6 +11,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -53,7 +54,11 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 		if err := applyK06ToStack(appStack, targetResource); err != nil {
 			return fmt.Errorf("failed to apply K06 vulnerability: %w", err)
 		}
-	// ... Add cases for K07, K08, K09, K10
+	case "K07":
+		if err := applyK07ToStack(appStack, targetResource, namespace); err != nil {
+			return fmt.Errorf("failed to apply K07 vulnerability: %w", err)
+		}
+	// ... Add cases for K08, K09, K10
 	default:
 		return fmt.Errorf("unknown vulnerability ID: %s", vulnerabilityID)
 	}
@@ -503,6 +508,165 @@ func addExposedAuthEnvironment(container *corev1.Container, deploymentName strin
 
 	// Append authentication environment variables
 	container.Env = append(container.Env, authEnvs...)
+}
+
+// applyK07ToStack modifies the baseline stack to demonstrate missing network segmentation controls
+func applyK07ToStack(appStack []client.Object, targetDeployment, namespace string) error {
+	// K07 vulnerabilities are about MISSING network controls rather than broken ones
+	// The baseline already has no NetworkPolicies, but we'll add vulnerable network configurations
+	// to make the lack of segmentation more obvious to security scanners
+
+	// Randomly choose one of four K07 vulnerability demonstrations
+	localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
+	vulnType := localRand.Intn(4)
+
+	switch vulnType {
+	case 0: // Unrestricted pod-to-pod communication (add annotation indicating this is intentional)
+		if err := addUnrestrictedPodAnnotation(appStack, targetDeployment); err != nil {
+			return err
+		}
+
+	case 1: // Database exposure (add service with broad access)
+		if err := createExposedDatabaseService(appStack, namespace); err != nil {
+			return err
+		}
+
+	case 2: // External traffic bypass (add NodePort service bypassing ingress)
+		if err := createBypassService(appStack, targetDeployment, namespace); err != nil {
+			return err
+		}
+
+	case 3: // Cross-namespace communication (add service with external name)
+		if err := createCrossNamespaceService(appStack, targetDeployment, namespace); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// addUnrestrictedPodAnnotation adds annotations indicating unrestricted pod communication
+func addUnrestrictedPodAnnotation(appStack []client.Object, targetDeployment string) error {
+	for _, obj := range appStack {
+		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
+			if dep.Spec.Template.Annotations == nil {
+				dep.Spec.Template.Annotations = make(map[string]string)
+			}
+			// Annotation that indicates network policies are disabled
+			dep.Spec.Template.Annotations["networking.kubernetes.io/network-policy"] = "disabled"
+			dep.Spec.Template.Annotations["networking.kubernetes.io/isolation"] = "none"
+			return nil
+		}
+	}
+	return fmt.Errorf("target deployment %s not found", targetDeployment)
+}
+
+// createExposedDatabaseService creates a service that exposes database to all pods
+func createExposedDatabaseService(appStack []client.Object, namespace string) error {
+	exposedService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "database-direct-access",
+			Namespace: namespace,
+			Annotations: map[string]string{
+				"networking.kubernetes.io/access-policy": "unrestricted",
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "postgres-db"},
+			Type:     corev1.ServiceTypeClusterIP,
+			Ports: []corev1.ServicePort{
+				{
+					Port:       5432,
+					TargetPort: intstr.FromInt(5432),
+					Name:       "postgres-exposed",
+				},
+			},
+		},
+	}
+
+	// Add the exposed service to the stack
+	for i, obj := range appStack {
+		if svc, ok := obj.(*corev1.Service); ok && svc.Name == "postgres-service" {
+			// Insert exposed service right after the regular postgres service
+			appStack = append(appStack[:i+1], append([]client.Object{exposedService}, appStack[i+1:]...)...)
+			break
+		}
+	}
+
+	return nil
+}
+
+// createBypassService creates a NodePort service that bypasses ingress controls
+func createBypassService(appStack []client.Object, targetDeployment, namespace string) error {
+	// Create a NodePort service for the target deployment to bypass ingress
+	bypassService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-bypass", targetDeployment),
+			Namespace: namespace,
+			Annotations: map[string]string{
+				"networking.kubernetes.io/bypass-ingress": "true",
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": targetDeployment},
+			Type:     corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{
+				{
+					Port:       8080,
+					TargetPort: intstr.FromInt(80),
+					NodePort:   30080, // Fixed NodePort for direct external access
+					Name:       "bypass-http",
+				},
+			},
+		},
+	}
+
+	// Add the bypass service to the stack
+	for i, obj := range appStack {
+		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
+			// Insert bypass service right after the target deployment
+			appStack = append(appStack[:i+1], append([]client.Object{bypassService}, appStack[i+1:]...)...)
+			break
+		}
+	}
+
+	return nil
+}
+
+// createCrossNamespaceService creates a service that allows cross-namespace communication
+func createCrossNamespaceService(appStack []client.Object, targetDeployment, namespace string) error {
+	crossNsService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-cross-ns", targetDeployment),
+			Namespace: namespace,
+			Annotations: map[string]string{
+				"networking.kubernetes.io/cross-namespace": "enabled",
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			// ExternalName service pointing to a service in another namespace
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "kube-dns.kube-system.svc.cluster.local",
+			Ports: []corev1.ServicePort{
+				{
+					Port:       53,
+					TargetPort: intstr.FromInt(53),
+					Name:       "dns-cross-access",
+				},
+			},
+		},
+	}
+
+	// Add the cross-namespace service to the stack
+	for i, obj := range appStack {
+		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
+			// Insert cross-ns service right after the target deployment
+			appStack = append(appStack[:i+1], append([]client.Object{crossNsService}, appStack[i+1:]...)...)
+			break
+		}
+	}
+
+	return nil
 }
 
 // The old functions below are no longer used - they've been replaced by the ToStack variants above
