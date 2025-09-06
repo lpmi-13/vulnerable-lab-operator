@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -41,8 +42,10 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 		if err := applyK02ToStack(appStack, targetResource); err != nil {
 			return fmt.Errorf("failed to apply K02 vulnerability: %w", err)
 		}
-	// case "K03":
-	// return applyK03ToStack(appStack, targetResource)
+	case "K03":
+		if err := applyK03ToStack(appStack, targetResource, namespace); err != nil {
+			return fmt.Errorf("failed to apply K03 vulnerability: %w", err)
+		}
 	// ... Add cases for K04, K06, K07, K08, K09, K10
 	default:
 		return fmt.Errorf("unknown vulnerability ID: %s", vulnerabilityID)
@@ -171,6 +174,225 @@ func applyK02ToStack(appStack []client.Object, targetDeployment string) error {
 	}
 
 	return fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
+}
+
+// applyK03ToStack modifies the baseline stack to apply overly permissive RBAC configurations
+func applyK03ToStack(appStack []client.Object, targetDeployment, namespace string) error {
+	// Find and modify the target deployment within the stack
+	for _, obj := range appStack {
+		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
+			// Randomly choose one of four K03 vulnerability types
+			localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
+			vulnType := localRand.Intn(4)
+
+			switch vulnType {
+			case 0: // Cluster Admin Access
+				if err := createClusterAdminRBAC(appStack, namespace); err != nil {
+					return err
+				}
+
+			case 1: // Secret Access
+				if err := createSecretAccessRBAC(appStack, namespace); err != nil {
+					return err
+				}
+
+			case 2: // Cross-Namespace Access
+				if err := createCrossNamespaceRBAC(appStack, namespace); err != nil {
+					return err
+				}
+
+			case 3: // Node Access
+				if err := createNodeAccessRBAC(appStack, namespace); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
+}
+
+// createClusterAdminRBAC grants cluster-admin permissions to the service account
+func createClusterAdminRBAC(appStack []client.Object, namespace string) error {
+	binding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-cluster-access", namespace),
+			Annotations: map[string]string{
+				"rbac.authorization.k8s.io/reason": "service-mesh-integration",
+			},
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "restricted-sa",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "cluster-admin",
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	// Add the RBAC resource to the stack
+	for i, obj := range appStack {
+		if _, ok := obj.(*corev1.ServiceAccount); ok {
+			// Insert binding right after service account
+			appStack = append(appStack[:i+1], append([]client.Object{binding}, appStack[i+1:]...)...)
+			break
+		}
+	}
+
+	return nil
+}
+
+// createSecretAccessRBAC grants broad secret access across the cluster
+func createSecretAccessRBAC(appStack []client.Object, namespace string) error {
+	role := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-secret-reader", namespace),
+			Annotations: map[string]string{
+				"rbac.authorization.k8s.io/reason": "config-management",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"secrets"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+		},
+	}
+
+	binding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-secret-access", namespace),
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "restricted-sa",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     role.Name,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	// Add the RBAC resources to the stack
+	for i, obj := range appStack {
+		if _, ok := obj.(*corev1.ServiceAccount); ok {
+			// Insert role and binding right after service account
+			appStack = append(appStack[:i+1], append([]client.Object{role, binding}, appStack[i+1:]...)...)
+			break
+		}
+	}
+
+	return nil
+}
+
+// createCrossNamespaceRBAC grants access to sensitive namespaces
+func createCrossNamespaceRBAC(appStack []client.Object, namespace string) error {
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-system-access", namespace),
+			Namespace: "kube-system",
+			Annotations: map[string]string{
+				"rbac.authorization.k8s.io/reason": "monitoring-integration",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods", "services", "configmaps"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+		},
+	}
+
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-system-binding", namespace),
+			Namespace: "kube-system",
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "restricted-sa",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "Role",
+			Name:     role.Name,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	// Add the RBAC resources to the stack
+	for i, obj := range appStack {
+		if _, ok := obj.(*corev1.ServiceAccount); ok {
+			// Insert role and binding right after service account
+			appStack = append(appStack[:i+1], append([]client.Object{role, binding}, appStack[i+1:]...)...)
+			break
+		}
+	}
+
+	return nil
+}
+
+// createNodeAccessRBAC grants access to node resources
+func createNodeAccessRBAC(appStack []client.Object, namespace string) error {
+	role := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-node-reader", namespace),
+			Annotations: map[string]string{
+				"rbac.authorization.k8s.io/reason": "resource-monitoring",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"nodes", "nodes/status", "nodes/metrics"},
+				Verbs:     []string{"get", "list", "watch", "patch"},
+			},
+		},
+	}
+
+	binding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-node-access", namespace),
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "restricted-sa",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     role.Name,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	// Add the RBAC resources to the stack
+	for i, obj := range appStack {
+		if _, ok := obj.(*corev1.ServiceAccount); ok {
+			// Insert role and binding right after service account
+			appStack = append(appStack[:i+1], append([]client.Object{role, binding}, appStack[i+1:]...)...)
+			break
+		}
+	}
+
+	return nil
 }
 
 // The old functions below are no longer used - they've been replaced by the ToStack variants above

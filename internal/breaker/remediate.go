@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -18,6 +19,8 @@ func CheckRemediation(ctx context.Context, c client.Client, vulnerabilityID, tar
 		return checkK01(ctx, c, targetResource, namespace)
 	case "K02":
 		return checkK02(ctx, c, targetResource, namespace)
+	case "K03":
+		return checkK03(ctx, c, targetResource, namespace)
 	default:
 		return false, fmt.Errorf("unknown vulnerability ID for remediation check: %s", vulnerabilityID)
 	}
@@ -118,4 +121,50 @@ func checkK02(ctx context.Context, c client.Client, targetDeployment, namespace 
 
 	logger.Info("K02 vulnerability still active: same vulnerable image", "target", targetDeployment, "image", currentImage)
 	return false, nil
+}
+
+// checkK03 verifies if the RBAC vulnerability has been fixed
+func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace string) (bool, error) {
+	logger := log.FromContext(ctx)
+
+	// Check if any of the problematic RBAC resources still exist
+	overpermissiveResources := []struct {
+		resource client.Object
+		name     string
+		reason   string
+	}{
+		{&rbacv1.ClusterRoleBinding{}, fmt.Sprintf("%s-cluster-access", namespace), "cluster-admin binding"},
+		{&rbacv1.ClusterRoleBinding{}, fmt.Sprintf("%s-secret-access", namespace), "secret access binding"},
+		{&rbacv1.RoleBinding{}, fmt.Sprintf("%s-system-binding", namespace), "cross-namespace binding"},
+		{&rbacv1.ClusterRoleBinding{}, fmt.Sprintf("%s-node-access", namespace), "node access binding"},
+		{&rbacv1.ClusterRole{}, fmt.Sprintf("%s-secret-reader", namespace), "secret reader role"},
+		{&rbacv1.Role{}, fmt.Sprintf("%s-system-access", namespace), "system access role"},
+		{&rbacv1.ClusterRole{}, fmt.Sprintf("%s-node-reader", namespace), "node reader role"},
+	}
+
+	for _, res := range overpermissiveResources {
+		key := client.ObjectKey{Name: res.name}
+		// For RoleBinding in kube-system, set the namespace
+		if res.name == fmt.Sprintf("%s-system-binding", namespace) {
+			key.Namespace = "kube-system"
+		}
+		if res.name == fmt.Sprintf("%s-system-access", namespace) {
+			key.Namespace = "kube-system"
+		}
+
+		err := c.Get(ctx, key, res.resource)
+		if err == nil {
+			// Resource still exists - vulnerability is active
+			logger.Info("K03 vulnerability still active", "target", targetDeployment,
+				"resource", res.name, "reason", res.reason)
+			return false, nil
+		} else if !errors.IsNotFound(err) {
+			// Unexpected error
+			return false, fmt.Errorf("failed to check RBAC resource %s: %w", res.name, err)
+		}
+		// Resource not found is good - it was deleted
+	}
+
+	logger.Info("K03 vulnerability remediated: overpermissive RBAC resources removed", "target", targetDeployment)
+	return true, nil
 }
