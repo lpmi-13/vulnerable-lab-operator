@@ -21,6 +21,9 @@ func CheckRemediation(ctx context.Context, c client.Client, vulnerabilityID, tar
 		return checkK02(ctx, c, targetResource, namespace)
 	case "K03":
 		return checkK03(ctx, c, targetResource, namespace)
+	// K04 (Lack of Centralized Policy Enforcement) and K05 (Inadequate Logging and Monitoring)
+	// are not implemented as they require external infrastructure (OPA Gatekeeper, SIEM systems)
+	// rather than resource-level misconfigurations that can be demonstrated in this lab environment
 	case "K06":
 		return checkK06(ctx, c, targetResource, namespace)
 	default:

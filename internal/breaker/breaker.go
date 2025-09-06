@@ -46,6 +46,9 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 		if err := applyK03ToStack(appStack, targetResource, namespace); err != nil {
 			return fmt.Errorf("failed to apply K03 vulnerability: %w", err)
 		}
+	// K04 (Lack of Centralized Policy Enforcement) and K05 (Inadequate Logging and Monitoring)
+	// are not implemented as they require external infrastructure (OPA Gatekeeper, SIEM systems)
+	// rather than resource-level misconfigurations that can be demonstrated in this lab environment
 	case "K06":
 		if err := applyK06ToStack(appStack, targetResource); err != nil {
 			return fmt.Errorf("failed to apply K06 vulnerability: %w", err)
