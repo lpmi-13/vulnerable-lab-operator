@@ -33,6 +33,9 @@ func CheckRemediation(ctx context.Context, c client.Client, vulnerabilityID, tar
 		return checkK07(ctx, c, targetResource, namespace)
 	case "K08":
 		return checkK08(ctx, c, targetResource, namespace)
+	// K09 (Misconfigured Cluster Components) and K10 (Outdated and Vulnerable Kubernetes Components)
+	// are not implemented as they require cluster-level administrative access and would affect
+	// the entire cluster rather than being contained within individual lab namespaces
 	default:
 		return false, fmt.Errorf("unknown vulnerability ID for remediation check: %s", vulnerabilityID)
 	}

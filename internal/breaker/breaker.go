@@ -69,7 +69,9 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 		if err := applyK08ToStack(appStack, targetResource, namespace); err != nil {
 			return fmt.Errorf("failed to apply K08 vulnerability: %w", err)
 		}
-	// ... Add cases for K09, K10
+	// K09 (Misconfigured Cluster Components) and K10 (Outdated and Vulnerable Kubernetes Components)
+	// are not implemented as they require cluster-level administrative access and would affect
+	// the entire cluster rather than being contained within individual lab namespaces
 	default:
 		return fmt.Errorf("unknown vulnerability ID: %s", vulnerabilityID)
 	}
