@@ -142,7 +142,8 @@ func checkK02(ctx context.Context, c client.Client, targetDeployment, namespace 
 func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace string) (bool, error) {
 	logger := log.FromContext(ctx)
 
-	// Check if any of the problematic RBAC resources still exist
+	// Since K03 applies only ONE of four possible RBAC vulnerabilities, we check for any existing
+	// overpermissive RBAC resources that may have been created for this namespace
 	overpermissiveResources := []struct {
 		resource client.Object
 		name     string
@@ -157,6 +158,7 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 		{&rbacv1.ClusterRole{}, fmt.Sprintf("%s-node-reader", namespace), "node reader role"},
 	}
 
+	vulnerabilityFound := false
 	for _, res := range overpermissiveResources {
 		key := client.ObjectKey{Name: res.name}
 		// For RoleBinding in kube-system, set the namespace
@@ -172,12 +174,17 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 			// Resource still exists - vulnerability is active
 			logger.Info("K03 vulnerability still active", "target", targetDeployment,
 				"resource", res.name, "reason", res.reason)
-			return false, nil
+			vulnerabilityFound = true
+			break // Found one vulnerability, that's enough to know it's not remediated
 		} else if !errors.IsNotFound(err) {
 			// Unexpected error
 			return false, fmt.Errorf("failed to check RBAC resource %s: %w", res.name, err)
 		}
-		// Resource not found is good - it was deleted
+		// Resource not found is good - continue checking
+	}
+
+	if vulnerabilityFound {
+		return false, nil
 	}
 
 	logger.Info("K03 vulnerability remediated: overpermissive RBAC resources removed", "target", targetDeployment)
