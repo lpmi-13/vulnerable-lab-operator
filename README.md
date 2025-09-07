@@ -1,4 +1,5 @@
 # vulnerable-k8s-operator
+
 Sometimes, it's helpful to practice identifying security vulnerabilities in a running k8s cluster that's not production. So this is a very simple k8s operator that picks a random vulnerability from the [OWASP Kubernetes Top Ten](https://owasp.org/www-project-kubernetes-top-ten/) and configures a k3s cluster with that misconfiguration.
 
 [K01: Insecure Workload Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K01-insecure-workload-configurations)
@@ -18,26 +19,38 @@ Sometimes, it's helpful to practice identifying security vulnerabilities in a ru
 [K08: Secrets Management Failures](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K08-secrets-management)
 
 [K09: Misconfigured Cluster Components](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K09-misconfigured-cluster-components)
+(we're skipping this one because it would require cluster-level and admin)
 
 [K10: Outdated and Vulnerable Kubernetes Components](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K10-vulnerable-components)
+(we're skipping this one for the same reason as K09)
 
-> NB: Becuase K05 from the list, Indequate Logging and Monitoring, is a bit tricky/brittle to detect, we've skipped it here, but it's definitely part of a wider security audit that should be done in a production system.
+> NB: Becuase K04/K05/K09/K10 are all a bit tricky/brittle to detect, we've skipped them here, but they're all definitely part of a wider security audit that should be done in a production system.
 
 The first thing to do is run some scanners to see what you can pick up (or you can eyeball the cluster/spec/etc, but the scanners are probably what you'll be using in production automation).
 
-- [kubescape](https://kubescape.io/docs/install-cli/) (for K01, K03, K04, K07, K08)
+- [kubescape](https://kubescape.io/docs/install-cli/) (for K01, K03, K07, K08)
 - kubeaudit (for K01, K06, K08) - deprecated, team recommends moving to kube-bench
 - [kube-bench](https://aquasecurity.github.io/kube-bench/v0.6.7/installation/) (for K09)
 - [trivy](https://trivy.dev/dev/getting-started/installation/) (for K02, once you've identified an insecure image...or you can run it in "k8s mode")
 
-...I don't currently have a good automated tool for K10 (Outdated and Vulnerable Components, but I'm sure we can find something)
 
 ## Description
-For V1, we're just going to use a specific misconfiguration for each of the top ten. For V2, we'll randomize the particular type of misconfiguration within each of the categories. For example, for K02, we can select from the following:
-- untrusted image registries
-- container images with CRITICAL CVEs
-- configuration poisoning to use an http protocol instead of https
-- addition of a malicious init container
+
+The operator is geared toward two distinct, though related, use cases.
+
+1. Running it in [Iximiuz Labs](https://labs.iximiuz.com) as a learning resource for users wanting practice finding and remediating kubernetes vulnerabilities like this.
+
+2. Running it in a remote ephemeral namespace for teams to test out their security scanning (I have no idea if anybody actually wants to do this, but I tried to make it as easy as possible)
+
+For the first case, we just clone this repository and run `make manifests`, `make install` and `make run`, which is not at all how you would normally deploy an operator in a production context, but it gives us a few advantages.
+
+- We don't want the operator itself to get flagged by the scans, and this way it doesn't actually run in the cluster, so it won't interfere with the investigation of the learners..
+- This is a completely ephemeral environment of a single node k3s cluster, and it's much easier and quicker than needing to deal with a container registry.
+- The logs of what the configured vulnerability is are harder for the learner to find, and so less of a temptation to "cheat" (though they could still be found, they're just not findable via a `kubectl logs` command).
+
+## Sequence of events in the labs
+
+The custom playground
 
 ## Getting Started
 
