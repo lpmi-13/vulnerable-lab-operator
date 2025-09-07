@@ -311,45 +311,24 @@ func checkK07(ctx context.Context, c client.Client, targetDeployment, namespace 
 		}
 	}
 
-	// Check for problematic services that demonstrate poor network segmentation
-	problematicServices := []struct {
-		name   string
-		reason string
-	}{
-		{"database-direct-access", "exposed database service"},
-		{fmt.Sprintf("%s-bypass", targetDeployment), "ingress bypass service"},
-		{fmt.Sprintf("%s-cross-ns", targetDeployment), "cross-namespace service"},
-	}
-
-	for _, svcInfo := range problematicServices {
-		svc := &corev1.Service{}
-		err := c.Get(ctx, client.ObjectKey{Name: svcInfo.name, Namespace: namespace}, svc)
-		if err == nil {
-			// Service still exists - vulnerability is active
-			logger.Info("K07 vulnerability still active", "target", targetDeployment,
-				"service", svcInfo.name, "reason", svcInfo.reason)
+	// Check for postgres service exposed as NodePort (vulnerability case 2)
+	postgresSvc := &corev1.Service{}
+	err = c.Get(ctx, client.ObjectKey{Name: "postgres-service", Namespace: namespace}, postgresSvc)
+	if err == nil {
+		if postgresSvc.Spec.Type == corev1.ServiceTypeNodePort {
+			logger.Info("K07 vulnerability still active: postgres service exposed as NodePort", "target", targetDeployment)
 			vulnerabilitiesFound = true
-			break
-		} else if !errors.IsNotFound(err) {
-			// Unexpected error
-			return false, fmt.Errorf("failed to check service %s: %w", svcInfo.name, err)
 		}
-		// Service not found is good - it was deleted
-	}
-
-	// Additional check: look for NodePort services (potential bypass)
-	serviceList := &corev1.ServiceList{}
-	err = c.List(ctx, serviceList, client.InNamespace(namespace))
-	if err != nil {
-		return false, fmt.Errorf("failed to list services: %w", err)
-	}
-
-	for _, svc := range serviceList.Items {
-		if svc.Spec.Type == corev1.ServiceTypeNodePort && strings.Contains(svc.Name, "bypass") {
-			logger.Info("K07 vulnerability still active: NodePort bypass service found", "target", targetDeployment, "service", svc.Name)
-			vulnerabilitiesFound = true
-			break
+		// Check for the service exposure annotation (vulnerability case 3)
+		if postgresSvc.Annotations != nil {
+			if exposure, exists := postgresSvc.Annotations["networking.kubernetes.io/exposure"]; exists && exposure == "external-database-access" {
+				logger.Info("K07 vulnerability still active: postgres service has exposure annotation", "target", targetDeployment)
+				vulnerabilitiesFound = true
+			}
 		}
+	} else if !errors.IsNotFound(err) {
+		// Unexpected error accessing postgres service
+		return false, fmt.Errorf("failed to check postgres service: %w", err)
 	}
 
 	if vulnerabilitiesFound {

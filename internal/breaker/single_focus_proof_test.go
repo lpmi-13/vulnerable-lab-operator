@@ -42,7 +42,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K03_Single_RBAC_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK03ToStack(appStack, target, namespace)
+			err := applyK03ToStack(&appStack, target, namespace)
 			if err != nil {
 				t.Fatalf("K03 iteration %d failed: %v", i, err)
 			}
@@ -59,7 +59,7 @@ func TestSingleFocusProof(t *testing.T) {
 				t.Fatalf("K06 iteration %d failed: %v", i, err)
 			}
 		}
-		t.Log("✓ K06 applies exactly ONE random authentication vulnerability (auto-mount tokens, hardcoded creds, default SA, or exposed auth)")
+		t.Log("✓ K06 applies exactly ONE random authentication vulnerability (auto-mount tokens, default SA, or service account annotations)")
 	})
 
 	// Test K07 - Network Segmentation
@@ -71,19 +71,19 @@ func TestSingleFocusProof(t *testing.T) {
 				t.Fatalf("K07 iteration %d failed: %v", i, err)
 			}
 		}
-		t.Log("✓ K07 applies exactly ONE random network vulnerability (unrestricted pods, exposed DB, bypass service, or cross-namespace service)")
+		t.Log("✓ K07 applies exactly ONE random network vulnerability (network policy disabled, isolation disabled, postgres NodePort, or service exposure annotation)")
 	})
 
 	// Test K08 - Secrets Management
 	t.Run("K08_Single_Secrets_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK08ToStack(appStack, target, namespace)
+			err := applyK08ToStack(&appStack, target, namespace)
 			if err != nil {
 				t.Fatalf("K08 iteration %d failed: %v", i, err)
 			}
 		}
-		t.Log("✓ K08 applies exactly ONE random secrets vulnerability (hardcoded env, insecure volumes, secrets in ConfigMaps, or vulnerable annotations)")
+		t.Log("✓ K08 applies exactly ONE random secrets vulnerability (secrets in ConfigMaps, hardcoded annotation, or volume annotation)")
 	})
 
 	t.Log("\n=== PROOF COMPLETE ===")
@@ -116,7 +116,7 @@ func TestRandomizationWorks(t *testing.T) {
 		}},
 		{"K03", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK03ToStack(appStack, target, namespace)
+			return applyK03ToStack(&appStack, target, namespace)
 		}},
 		{"K06", func() error {
 			appStack := baseline.GetAppStack(namespace)
@@ -128,7 +128,7 @@ func TestRandomizationWorks(t *testing.T) {
 		}},
 		{"K08", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK08ToStack(appStack, target, namespace)
+			return applyK08ToStack(&appStack, target, namespace)
 		}},
 	}
 

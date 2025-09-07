@@ -178,6 +178,16 @@ the '--force' flag and manually ensure that any custom configuration
 previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
 is manually re-applied afterwards.
 
+## Testing
+
+This project includes comprehensive unit tests for the core vulnerability logic in the `internal/breaker` package. You can run these tests with:
+
+```sh
+go test ./internal/breaker/ -v
+```
+
+**Note on Integration Tests**: The original Kubebuilder-generated controller and e2e integration tests have been removed because they require additional Kubernetes infrastructure dependencies (`kubebuilder`, `kind`, `etcd`, etc.). For an educational vulnerability lab operator, the unit tests that validate the core vulnerability application logic are sufficient and more practical. The integration tests mainly verified basic Kubernetes CRUD operations which are already well-tested by the controller-runtime framework.
+
 ## Contributing
 // TODO(user): Add detailed information on how you would like others to contribute to this project
 
