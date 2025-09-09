@@ -57,7 +57,16 @@ func GetAppStack(namespace string) []client.Object {
 										Name:          "postgres",
 									},
 								},
-								SecurityContext: getSecureSecurityContext(999), // postgres user
+								SecurityContext: &corev1.SecurityContext{
+									RunAsUser:                ptr.To(int64(999)), // postgres user
+									RunAsGroup:               ptr.To(int64(999)), // postgres group  
+									RunAsNonRoot:             ptr.To(true),
+									AllowPrivilegeEscalation: ptr.To(false),
+									ReadOnlyRootFilesystem:   ptr.To(false),
+									Capabilities: &corev1.Capabilities{
+										Drop: []corev1.Capability{"ALL"},
+									},
+								}
 								Env: []corev1.EnvVar{
 									{
 										Name:  "POSTGRES_DB",
@@ -111,6 +120,9 @@ func GetAppStack(namespace string) []client.Object {
 									EmptyDir: &corev1.EmptyDirVolumeSource{},
 								},
 							},
+						},
+						SecurityContext: &corev1.PodSecurityContext{
+							FSGroup: ptr.To(int64(999)), // postgres group - ensures volume is writable by postgres user
 						},
 					},
 				},
