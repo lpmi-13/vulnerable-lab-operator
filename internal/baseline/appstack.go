@@ -59,7 +59,7 @@ func GetAppStack(namespace string) []client.Object {
 								},
 								SecurityContext: &corev1.SecurityContext{
 									RunAsUser:                ptr.To(int64(999)), // postgres user
-									RunAsGroup:               ptr.To(int64(999)), // postgres group  
+									RunAsGroup:               ptr.To(int64(999)), // postgres group
 									RunAsNonRoot:             ptr.To(true),
 									AllowPrivilegeEscalation: ptr.To(false),
 									ReadOnlyRootFilesystem:   ptr.To(false),
