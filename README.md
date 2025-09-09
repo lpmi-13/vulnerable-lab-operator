@@ -50,7 +50,7 @@ For the first case, we just clone this repository and run `make manifests`, `mak
 
 ## Sequence of events in the labs
 
-The custom playground
+The custom playground will download the repo and build the operator. It will start the operator and echo out to the user with the `wall` utility every time the operator resets. The user can continue finding and fixing the vulnerabilities as long as they want.
 
 ## Getting Started
 
