@@ -66,7 +66,7 @@ func GetAppStack(namespace string) []client.Object {
 									Capabilities: &corev1.Capabilities{
 										Drop: []corev1.Capability{"ALL"},
 									},
-								}
+								},
 								Env: []corev1.EnvVar{
 									{
 										Name:  "POSTGRES_DB",
