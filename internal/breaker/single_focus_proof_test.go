@@ -10,7 +10,7 @@ import (
 // by showing that each function executes successfully and makes focused changes
 func TestSingleFocusProof(t *testing.T) {
 	namespace := "test-single-focus"
-	target := "api"
+	target := apiDeploymentName
 
 	t.Log("=== Testing Single-Focus Vulnerability Application ===")
 
@@ -95,7 +95,7 @@ func TestSingleFocusProof(t *testing.T) {
 // TestRandomizationWorks proves that each vulnerability function produces different results across runs
 func TestRandomizationWorks(t *testing.T) {
 	namespace := "test-randomization"
-	target := "api"
+	target := apiDeploymentName
 
 	t.Log("=== Testing Randomization Within Categories ===")
 

@@ -2,7 +2,6 @@ package breaker
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"math/rand"
 	"time"
@@ -17,6 +16,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/lpmi-13/vulnerable-lab-operator/internal/baseline"
+)
+
+// Constants for repeated strings (linter: goconst)
+const (
+	networkPolicyDisabled  = "disabled"
+	networkIsolationNone   = "none"
+	postgresServiceName    = "postgres-service"
+	externalDatabaseAccess = "external-database-access"
+	apiDeploymentName      = "api"
 )
 
 // Constants for commonly used strings
@@ -448,65 +456,6 @@ func applyK06ToStack(appStack []client.Object, targetDeployment string) error {
 	return fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
 }
 
-// replaceSecretsWithPlaintext converts SecretKeyRef to plain environment variables
-func replaceSecretsWithPlaintext(container *corev1.Container, _ string) error {
-	for i, env := range container.Env {
-		if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
-			// Replace secret references with hardcoded values based on the secret
-			var plainValue string
-			switch {
-			case env.ValueFrom.SecretKeyRef.Name == "postgres-credentials" && env.ValueFrom.SecretKeyRef.Key == "username":
-				plainValue = "appuser"
-			case env.ValueFrom.SecretKeyRef.Name == "postgres-credentials" && env.ValueFrom.SecretKeyRef.Key == "password":
-				plainValue = "apppassword"
-			case env.ValueFrom.SecretKeyRef.Name == paymentAPIKeySecret && env.ValueFrom.SecretKeyRef.Key == "key":
-				plainValue = testAPIKey
-			default:
-				continue // Skip unknown secrets
-			}
-
-			// Replace with plain value
-			container.Env[i] = corev1.EnvVar{
-				Name:  env.Name,
-				Value: plainValue,
-			}
-		}
-	}
-	return nil
-}
-
-// addExposedAuthEnvironment adds authentication tokens as plain environment variables
-func addExposedAuthEnvironment(container *corev1.Container, deploymentName string) {
-	// Add different auth tokens based on deployment type
-	var authEnvs []corev1.EnvVar
-
-	switch deploymentName {
-	case "api":
-		authEnvs = []corev1.EnvVar{
-			{Name: "JWT_SECRET", Value: "super-secret-jwt-key-123"},
-			{Name: "API_TOKEN", Value: "bearer-token-abcdef123456"},
-		}
-	case "user-service":
-		authEnvs = []corev1.EnvVar{
-			{Name: "AUTH_KEY", Value: "user-service-auth-key-789"},
-			{Name: "SESSION_SECRET", Value: "session-secret-xyz789"},
-		}
-	case "payment-service":
-		authEnvs = []corev1.EnvVar{
-			{Name: "STRIPE_SECRET", Value: "sk_live_dangerous_key_456"},
-			{Name: "WEBHOOK_SECRET", Value: "whsec_payment_webhook_secret"},
-		}
-	default:
-		authEnvs = []corev1.EnvVar{
-			{Name: "AUTH_TOKEN", Value: "generic-auth-token-123"},
-			{Name: "SECRET_KEY", Value: "hardcoded-secret-key-456"},
-		}
-	}
-
-	// Append authentication environment variables
-	container.Env = append(container.Env, authEnvs...)
-}
-
 // applyK07ToStack modifies the baseline stack to demonstrate missing network segmentation controls
 func applyK07ToStack(appStack []client.Object, targetDeployment, namespace string) error {
 	// K07 vulnerabilities are about MISSING network controls rather than broken ones
@@ -548,7 +497,7 @@ func addNetworkPolicyDisabledAnnotation(appStack []client.Object, targetDeployme
 			if dep.Spec.Template.Annotations == nil {
 				dep.Spec.Template.Annotations = make(map[string]string)
 			}
-			dep.Spec.Template.Annotations["networking.kubernetes.io/network-policy"] = "disabled"
+			dep.Spec.Template.Annotations["networking.kubernetes.io/network-policy"] = networkPolicyDisabled
 			return nil
 		}
 	}
@@ -562,7 +511,7 @@ func addNetworkIsolationDisabledAnnotation(appStack []client.Object, targetDeplo
 			if dep.Spec.Template.Annotations == nil {
 				dep.Spec.Template.Annotations = make(map[string]string)
 			}
-			dep.Spec.Template.Annotations["networking.kubernetes.io/isolation"] = "none"
+			dep.Spec.Template.Annotations["networking.kubernetes.io/isolation"] = networkIsolationNone
 			return nil
 		}
 	}
@@ -572,37 +521,36 @@ func addNetworkIsolationDisabledAnnotation(appStack []client.Object, targetDeplo
 // addServiceExposureAnnotation adds annotation to postgres service without changing service type
 func addServiceExposureAnnotation(appStack []client.Object) error {
 	for _, obj := range appStack {
-		if svc, ok := obj.(*corev1.Service); ok && svc.Name == "postgres-service" {
+		if svc, ok := obj.(*corev1.Service); ok && svc.Name == postgresServiceName {
 			if svc.Annotations == nil {
 				svc.Annotations = make(map[string]string)
 			}
-			svc.Annotations["networking.kubernetes.io/exposure"] = "external-database-access"
+			svc.Annotations["networking.kubernetes.io/exposure"] = externalDatabaseAccess
 			return nil
 		}
 	}
-	return fmt.Errorf("postgres-service not found in baseline stack") 
+	return fmt.Errorf("%s not found in baseline stack", postgresServiceName)
 }
-
 
 // exposePostgresServiceAsNodePort modifies the postgres service to be externally accessible
 func exposePostgresServiceAsNodePort(appStack []client.Object) error {
 	for _, obj := range appStack {
-		if svc, ok := obj.(*corev1.Service); ok && svc.Name == "postgres-service" {
+		if svc, ok := obj.(*corev1.Service); ok && svc.Name == postgresServiceName {
 			// Change the service type from ClusterIP to NodePort to expose it externally
 			svc.Spec.Type = corev1.ServiceTypeNodePort
-			
+
 			// Add a specific NodePort for the postgres port
 			for i := range svc.Spec.Ports {
 				if svc.Spec.Ports[i].Name == "postgres" || svc.Spec.Ports[i].Port == 5432 {
 					svc.Spec.Ports[i].NodePort = 30432 // Expose postgres on node port 30432
 				}
 			}
-			
+
 			return nil
 		}
 	}
-	
-	return fmt.Errorf("postgres-service not found in baseline stack")
+
+	return fmt.Errorf("%s not found in baseline stack", postgresServiceName)
 }
 
 // applyK08ToStack modifies the baseline stack to apply secrets management vulnerabilities
@@ -631,41 +579,6 @@ func applyK08ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 	return nil
 }
 
-// replaceSecretsWithHardcodedOnly converts secret references to plain environment variables (no annotation)
-func replaceSecretsWithHardcodedOnly(appStack *[]client.Object, targetDeployment string) error {
-	for _, obj := range *appStack {
-		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
-			container := &dep.Spec.Template.Spec.Containers[0]
-
-			// Replace secret references with hardcoded values
-			for i, env := range container.Env {
-				if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
-					// Convert secret reference to hardcoded value
-					var plainValue string
-					switch {
-					case env.ValueFrom.SecretKeyRef.Name == "jwt-secret" || env.Name == "JWT_SECRET":
-						plainValue = "super-secure-jwt-signing-key-2024"
-					case env.ValueFrom.SecretKeyRef.Name == "redis-password" || env.Name == "REDIS_PASSWORD":
-						plainValue = "redis-secure-password-123"
-					case env.ValueFrom.SecretKeyRef.Name == paymentAPIKeySecret || env.Name == "API_KEY":
-						plainValue = testAPIKey
-					default:
-						continue
-					}
-
-					// Replace with hardcoded value (no annotation)
-					container.Env[i] = corev1.EnvVar{
-						Name:  env.Name,
-						Value: plainValue,
-					}
-				}
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("target deployment %s not found", targetDeployment)
-}
-
 // addHardcodedSecretsAnnotation adds annotation indicating hardcoded secrets (without changing environment)
 func addHardcodedSecretsAnnotation(appStack *[]client.Object, targetDeployment string) error {
 	for _, obj := range *appStack {
@@ -688,23 +601,6 @@ func addInsecureVolumeAnnotation(appStack *[]client.Object, targetDeployment str
 				dep.Spec.Template.Annotations = make(map[string]string)
 			}
 			dep.Spec.Template.Annotations["security.kubernetes.io/volume-permissions"] = "debugging-enabled"
-			return nil
-		}
-	}
-	return fmt.Errorf("target deployment %s not found", targetDeployment)
-}
-
-// makeSecretVolumeInsecure changes secret volume permissions to world-readable (no annotation)
-func makeSecretVolumeInsecure(appStack *[]client.Object, targetDeployment string) error {
-	for _, obj := range *appStack {
-		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
-			// Find and modify secret volumes
-			for i, volume := range dep.Spec.Template.Spec.Volumes {
-				if volume.Secret != nil {
-					// Make secret volume world-readable (no annotation)
-					dep.Spec.Template.Spec.Volumes[i].Secret.DefaultMode = ptr.To(int32(0777))
-				}
-			}
 			return nil
 		}
 	}
@@ -776,40 +672,6 @@ func moveSecretsToConfigMap(appStack *[]client.Object, targetDeployment, namespa
 		}
 	}
 
-	return nil
-}
-
-// exposeSecretsAsBase64 changes StringData to Data to expose base64 encoding
-func exposeSecretsAsBase64(appStack *[]client.Object, _ string) error {
-
-	for _, obj := range *appStack {
-		if secret, ok := obj.(*corev1.Secret); ok {
-			// Look for secrets related to the target deployment
-			if secret.Name == "api-secrets" || secret.Name == "redis-auth" || secret.Name == paymentAPIKeySecret {
-				// Convert StringData to Data (exposes base64 encoding)
-				if secret.StringData != nil {
-					if secret.Data == nil {
-						secret.Data = make(map[string][]byte)
-					}
-
-					// Convert all StringData to base64 Data
-					for key, value := range secret.StringData {
-						secret.Data[key] = []byte(base64.StdEncoding.EncodeToString([]byte(value)))
-					}
-
-					// Clear StringData to force use of Data field
-					secret.StringData = nil
-				}
-
-				// Add annotation indicating this exposes secrets
-				if secret.Annotations == nil {
-					secret.Annotations = make(map[string]string)
-				}
-				secret.Annotations["encoding.kubernetes.io/format"] = "base64-visible"
-				break
-			}
-		}
-	}
 	return nil
 }
 

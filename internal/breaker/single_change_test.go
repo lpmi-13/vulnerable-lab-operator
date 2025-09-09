@@ -23,7 +23,7 @@ func TestK01MakesFocusedChanges(t *testing.T) {
 		// Find the target deployment before applying K01
 		var originalDep *appsv1.Deployment
 		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == "api" {
+			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
 				originalDep = dep.DeepCopy()
 				break
 			}
@@ -41,7 +41,7 @@ func TestK01MakesFocusedChanges(t *testing.T) {
 		// Find the modified deployment
 		var modifiedDep *appsv1.Deployment
 		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == "api" {
+			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
 				modifiedDep = dep
 				break
 			}
@@ -104,7 +104,7 @@ func TestK02MakesFocusedChanges(t *testing.T) {
 		// Find the target deployment before applying K02
 		var originalDep *appsv1.Deployment
 		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == "api" {
+			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
 				originalDep = dep.DeepCopy()
 				break
 			}
@@ -124,7 +124,7 @@ func TestK02MakesFocusedChanges(t *testing.T) {
 		// Find the modified deployment
 		var modifiedDep *appsv1.Deployment
 		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == "api" {
+			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
 				modifiedDep = dep
 				break
 			}
@@ -209,7 +209,7 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 		// Find the original deployment state
 		var originalDep *appsv1.Deployment
 		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == "api" {
+			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
 				originalDep = dep.DeepCopy()
 				break
 			}
@@ -227,7 +227,7 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 		// Find the modified deployment
 		var modifiedDep *appsv1.Deployment
 		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == "api" {
+			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
 				modifiedDep = dep
 				break
 			}
@@ -304,7 +304,7 @@ func TestK07MakesFocusedChanges(t *testing.T) {
 		var originalDep *appsv1.Deployment
 		var originalPostgresSvc *corev1.Service
 		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == "api" {
+			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
 				originalDep = dep.DeepCopy()
 			}
 			if svc, ok := obj.(*corev1.Service); ok && svc.Name == "postgres-service" {
@@ -328,7 +328,7 @@ func TestK07MakesFocusedChanges(t *testing.T) {
 		var modifiedDep *appsv1.Deployment
 		var modifiedPostgresSvc *corev1.Service
 		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == "api" {
+			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
 				modifiedDep = dep
 			}
 			if svc, ok := obj.(*corev1.Service); ok && svc.Name == "postgres-service" {
@@ -391,7 +391,7 @@ func TestK08MakesFocusedChanges(t *testing.T) {
 		// Find the original deployment state
 		var originalDep *appsv1.Deployment
 		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == "api" {
+			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
 				originalDep = dep.DeepCopy()
 				break
 			}
@@ -417,7 +417,7 @@ func TestK08MakesFocusedChanges(t *testing.T) {
 			// Check for modifications to existing deployment
 			var modifiedDep *appsv1.Deployment
 			for _, obj := range appStack {
-				if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == "api" {
+				if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
 					modifiedDep = dep
 					break
 				}
