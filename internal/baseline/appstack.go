@@ -69,6 +69,14 @@ func GetAppStack(namespace string) []client.Object {
 								},
 								Env: []corev1.EnvVar{
 									{
+										Name:  "PGDATA",
+										Value: "/var/lib/postgresql/data/pgdata",
+									},
+									{
+										Name:  "POSTGRES_INITDB_ARGS",
+										Value: "--auth-host=trust",
+									},
+									{
 										Name:  "POSTGRES_DB",
 										Value: "appdb",
 									},
