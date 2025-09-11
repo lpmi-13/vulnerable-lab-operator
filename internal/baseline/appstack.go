@@ -52,6 +52,7 @@ func GetAppStack(namespace string) []client.Object {
 							{
 								Name:  "postgres",
 								Image: "postgres:17-alpine",
+								ImagePullPolicy: corev1.PullAlways,
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 5432,
@@ -208,6 +209,7 @@ func GetAppStack(namespace string) []client.Object {
 							{
 								Name:  "redis",
 								Image: "redis:8.2-alpine",
+								ImagePullPolicy: corev1.PullAlways,
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 6379,
@@ -285,6 +287,7 @@ func GetAppStack(namespace string) []client.Object {
 							{
 								Name:  "prometheus",
 								Image: "prom/prometheus:v3.5.0",
+								ImagePullPolicy: corev1.PullAlways,
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 9090,
@@ -421,6 +424,7 @@ scrape_configs:
 							{
 								Name:  "grafana",
 								Image: "grafana/grafana:12.2.0-17630182352-ubuntu",
+								ImagePullPolicy: corev1.PullAlways,
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 3000,
@@ -536,6 +540,7 @@ scrape_configs:
 							{
 								Name:    "api-server",
 								Image:   "node:22-alpine",
+								ImagePullPolicy: corev1.PullAlways,
 								Command: []string{"sleep", "infinity"}, // Keep container running
 								Ports: []corev1.ContainerPort{
 									{
@@ -654,6 +659,7 @@ scrape_configs:
 							{
 								Name:    "user-api",
 								Image:   "python:3.13-alpine",
+								ImagePullPolicy: corev1.PullAlways,
 								Command: []string{"sleep", "infinity"},
 								Ports: []corev1.ContainerPort{
 									{
@@ -760,6 +766,7 @@ scrape_configs:
 							{
 								Name:    "payment-processor",
 								Image:   "ruby:3.3-alpine",
+								ImagePullPolicy: corev1.PullAlways,
 								Command: []string{"sleep", "infinity"},
 								Ports: []corev1.ContainerPort{
 									{
@@ -975,6 +982,7 @@ http {
 							{
 								Name:  "web-ui",
 								Image: "nginx:1.29.1-alpine",
+								ImagePullPolicy: corev1.PullAlways,
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 8080,
