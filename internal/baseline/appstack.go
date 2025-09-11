@@ -50,8 +50,8 @@ func GetAppStack(namespace string) []client.Object {
 						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
-								Name:  "postgres",
-								Image: "postgres:17-alpine",
+								Name:            "postgres",
+								Image:           "postgres:17-alpine",
 								ImagePullPolicy: corev1.PullAlways,
 								Ports: []corev1.ContainerPort{
 									{
@@ -207,8 +207,8 @@ func GetAppStack(namespace string) []client.Object {
 						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
-								Name:  "redis",
-								Image: "redis:8.2-alpine",
+								Name:            "redis",
+								Image:           "redis:8.2-alpine",
 								ImagePullPolicy: corev1.PullAlways,
 								Ports: []corev1.ContainerPort{
 									{
@@ -285,8 +285,8 @@ func GetAppStack(namespace string) []client.Object {
 						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
-								Name:  "prometheus",
-								Image: "prom/prometheus:v3.5.0",
+								Name:            "prometheus",
+								Image:           "prom/prometheus:v3.5.0",
 								ImagePullPolicy: corev1.PullAlways,
 								Ports: []corev1.ContainerPort{
 									{
@@ -422,8 +422,8 @@ scrape_configs:
 						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
-								Name:  "grafana",
-								Image: "grafana/grafana:12.2.0-17630182352-ubuntu",
+								Name:            "grafana",
+								Image:           "grafana/grafana:12.2.0-17630182352-ubuntu",
 								ImagePullPolicy: corev1.PullAlways,
 								Ports: []corev1.ContainerPort{
 									{
@@ -538,10 +538,10 @@ scrape_configs:
 						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
-								Name:    "api-server",
-								Image:   "node:22-alpine",
+								Name:            "api-server",
+								Image:           "node:22-alpine",
 								ImagePullPolicy: corev1.PullAlways,
-								Command: []string{"sleep", "infinity"}, // Keep container running
+								Command:         []string{"sleep", "infinity"}, // Keep container running
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 5000,
@@ -657,10 +657,10 @@ scrape_configs:
 						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
-								Name:    "user-api",
-								Image:   "python:3.13-alpine",
+								Name:            "user-api",
+								Image:           "python:3.13-alpine",
 								ImagePullPolicy: corev1.PullAlways,
-								Command: []string{"sleep", "infinity"},
+								Command:         []string{"sleep", "infinity"},
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 8090,
@@ -764,10 +764,10 @@ scrape_configs:
 						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
-								Name:    "payment-processor",
-								Image:   "ruby:3.3-alpine",
+								Name:            "payment-processor",
+								Image:           "ruby:3.3-alpine",
 								ImagePullPolicy: corev1.PullAlways,
-								Command: []string{"sleep", "infinity"},
+								Command:         []string{"sleep", "infinity"},
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 8091,
@@ -980,8 +980,8 @@ http {
 						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
-								Name:  "web-ui",
-								Image: "nginx:1.29.1-alpine",
+								Name:            "web-ui",
+								Image:           "nginx:1.29.1-alpine",
 								ImagePullPolicy: corev1.PullAlways,
 								Ports: []corev1.ContainerPort{
 									{
