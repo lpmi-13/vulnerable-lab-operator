@@ -107,12 +107,14 @@ func GetAppStack(namespace string) []client.Object {
 								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("256Mi"),
-										corev1.ResourceCPU:    resource.MustParse("100m"),
+										corev1.ResourceMemory:           resource.MustParse("256Mi"),
+										corev1.ResourceCPU:              resource.MustParse("100m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("1Gi"),
 									},
 									Limits: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("512Mi"),
-										corev1.ResourceCPU:    resource.MustParse("200m"),
+										corev1.ResourceMemory:           resource.MustParse("512Mi"),
+										corev1.ResourceCPU:              resource.MustParse("200m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("2Gi"),
 									},
 								},
 								VolumeMounts: []corev1.VolumeMount{
@@ -225,12 +227,14 @@ func GetAppStack(namespace string) []client.Object {
 								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("64Mi"),
-										corev1.ResourceCPU:    resource.MustParse("50m"),
+										corev1.ResourceMemory:           resource.MustParse("64Mi"),
+										corev1.ResourceCPU:              resource.MustParse("50m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("256Mi"),
 									},
 									Limits: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("128Mi"),
-										corev1.ResourceCPU:    resource.MustParse("100m"),
+										corev1.ResourceMemory:           resource.MustParse("128Mi"),
+										corev1.ResourceCPU:              resource.MustParse("100m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("512Mi"),
 									},
 								},
 							},
@@ -304,12 +308,14 @@ func GetAppStack(namespace string) []client.Object {
 								SecurityContext: getSecureSecurityContext(65534), // nobody user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("256Mi"),
-										corev1.ResourceCPU:    resource.MustParse("100m"),
+										corev1.ResourceMemory:           resource.MustParse("256Mi"),
+										corev1.ResourceCPU:              resource.MustParse("100m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("1Gi"),
 									},
 									Limits: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("512Mi"),
-										corev1.ResourceCPU:    resource.MustParse("200m"),
+										corev1.ResourceMemory:           resource.MustParse("512Mi"),
+										corev1.ResourceCPU:              resource.MustParse("200m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("2Gi"),
 									},
 								},
 								VolumeMounts: []corev1.VolumeMount{
@@ -462,12 +468,14 @@ scrape_configs:
 								SecurityContext: getSecureSecurityContext(10004), // grafana user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("256Mi"),
-										corev1.ResourceCPU:    resource.MustParse("100m"),
+										corev1.ResourceMemory:           resource.MustParse("256Mi"),
+										corev1.ResourceCPU:              resource.MustParse("100m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("1Gi"),
 									},
 									Limits: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("512Mi"),
-										corev1.ResourceCPU:    resource.MustParse("200m"),
+										corev1.ResourceMemory:           resource.MustParse("512Mi"),
+										corev1.ResourceCPU:              resource.MustParse("200m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("2Gi"),
 									},
 								},
 								VolumeMounts: []corev1.VolumeMount{
@@ -597,12 +605,14 @@ scrape_configs:
 								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("64Mi"),
-										corev1.ResourceCPU:    resource.MustParse("50m"),
+										corev1.ResourceMemory:           resource.MustParse("64Mi"),
+										corev1.ResourceCPU:              resource.MustParse("50m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("256Mi"),
 									},
 									Limits: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("128Mi"),
-										corev1.ResourceCPU:    resource.MustParse("100m"),
+										corev1.ResourceMemory:           resource.MustParse("128Mi"),
+										corev1.ResourceCPU:              resource.MustParse("100m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("512Mi"),
 									},
 								},
 							},
@@ -684,12 +694,14 @@ scrape_configs:
 								SecurityContext: getSecureSecurityContext(10006), // python user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("64Mi"),
-										corev1.ResourceCPU:    resource.MustParse("50m"),
+										corev1.ResourceMemory:           resource.MustParse("64Mi"),
+										corev1.ResourceCPU:              resource.MustParse("50m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("256Mi"),
 									},
 									Limits: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("128Mi"),
-										corev1.ResourceCPU:    resource.MustParse("100m"),
+										corev1.ResourceMemory:           resource.MustParse("128Mi"),
+										corev1.ResourceCPU:              resource.MustParse("100m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("512Mi"),
 									},
 								},
 								VolumeMounts: []corev1.VolumeMount{
@@ -808,12 +820,14 @@ scrape_configs:
 								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("64Mi"),
-										corev1.ResourceCPU:    resource.MustParse("50m"),
+										corev1.ResourceMemory:           resource.MustParse("64Mi"),
+										corev1.ResourceCPU:              resource.MustParse("50m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("256Mi"),
 									},
 									Limits: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("128Mi"),
-										corev1.ResourceCPU:    resource.MustParse("100m"),
+										corev1.ResourceMemory:           resource.MustParse("128Mi"),
+										corev1.ResourceCPU:              resource.MustParse("100m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("512Mi"),
 									},
 								},
 							},
@@ -1010,12 +1024,14 @@ http {
 								Command: []string{"nginx", "-g", "daemon off;"},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("32Mi"),
-										corev1.ResourceCPU:    resource.MustParse("10m"),
+										corev1.ResourceMemory:           resource.MustParse("32Mi"),
+										corev1.ResourceCPU:              resource.MustParse("10m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("128Mi"),
 									},
 									Limits: corev1.ResourceList{
-										corev1.ResourceMemory: resource.MustParse("64Mi"),
-										corev1.ResourceCPU:    resource.MustParse("50m"),
+										corev1.ResourceMemory:           resource.MustParse("64Mi"),
+										corev1.ResourceCPU:              resource.MustParse("50m"),
+										corev1.ResourceEphemeralStorage: resource.MustParse("256Mi"),
 									},
 								},
 							},
