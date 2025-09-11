@@ -58,8 +58,8 @@ func GetAppStack(namespace string) []client.Object {
 									},
 								},
 								SecurityContext: &corev1.SecurityContext{
-									RunAsUser:                ptr.To(int64(999)), // postgres user
-									RunAsGroup:               ptr.To(int64(999)), // postgres group
+									RunAsUser:                ptr.To(int64(10001)), // postgres user
+									RunAsGroup:               ptr.To(int64(10001)), // postgres group
 									RunAsNonRoot:             ptr.To(true),
 									AllowPrivilegeEscalation: ptr.To(false),
 									ReadOnlyRootFilesystem:   ptr.To(false),
@@ -130,7 +130,7 @@ func GetAppStack(namespace string) []client.Object {
 							},
 						},
 						SecurityContext: &corev1.PodSecurityContext{
-							FSGroup: ptr.To(int64(999)), // postgres group - ensures volume is writable by postgres user
+							FSGroup: ptr.To(int64(10001)), // postgres group - ensures volume is writable by postgres user
 						},
 					},
 				},
@@ -193,7 +193,7 @@ func GetAppStack(namespace string) []client.Object {
 										Name:          "redis",
 									},
 								},
-								SecurityContext: getSecureSecurityContext(999), // redis user
+								SecurityContext: getSecureSecurityContext(10002), // redis user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("64Mi"),
@@ -396,7 +396,7 @@ scrape_configs:
 										Value: "false",
 									},
 								},
-								SecurityContext: getSecureSecurityContext(472), // grafana user
+								SecurityContext: getSecureSecurityContext(10004), // grafana user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("256Mi"),
@@ -514,7 +514,7 @@ scrape_configs:
 										},
 									},
 								},
-								SecurityContext: getSecureSecurityContext(1000), // node user
+								SecurityContext: getSecureSecurityContext(10005), // node user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("64Mi"),
@@ -592,7 +592,7 @@ scrape_configs:
 										Value: "user-service",
 									},
 								},
-								SecurityContext: getSecureSecurityContext(1000), // python user
+								SecurityContext: getSecureSecurityContext(10006), // python user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("64Mi"),
@@ -699,7 +699,7 @@ scrape_configs:
 										},
 									},
 								},
-								SecurityContext: getSecureSecurityContext(1000), // ruby user
+								SecurityContext: getSecureSecurityContext(10007), // ruby user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("64Mi"),
