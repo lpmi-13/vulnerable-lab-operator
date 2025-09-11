@@ -19,7 +19,7 @@ func getSecureSecurityContext(uid int64) *corev1.SecurityContext {
 		RunAsGroup:               ptr.To(uid),
 		RunAsNonRoot:             ptr.To(true),
 		AllowPrivilegeEscalation: ptr.To(false),
-		ReadOnlyRootFilesystem:   ptr.To(false), // Most apps need to write temp files
+		ReadOnlyRootFilesystem:   ptr.To(true),
 		Capabilities: &corev1.Capabilities{
 			Drop: []corev1.Capability{"ALL"},
 		},
@@ -63,7 +63,7 @@ func GetAppStack(namespace string) []client.Object {
 									RunAsGroup:               ptr.To(int64(10001)), // postgres group
 									RunAsNonRoot:             ptr.To(true),
 									AllowPrivilegeEscalation: ptr.To(false),
-									ReadOnlyRootFilesystem:   ptr.To(false),
+									ReadOnlyRootFilesystem:   ptr.To(true),
 									Capabilities: &corev1.Capabilities{
 										Drop: []corev1.Capability{"ALL"},
 									},
@@ -119,12 +119,32 @@ func GetAppStack(namespace string) []client.Object {
 										Name:      "postgres-data",
 										MountPath: "/var/lib/postgresql/data",
 									},
+									{
+										Name:      "postgres-tmp",
+										MountPath: "/tmp",
+									},
+									{
+										Name:      "postgres-var-tmp",
+										MountPath: "/var/tmp",
+									},
 								},
 							},
 						},
 						Volumes: []corev1.Volume{
 							{
 								Name: "postgres-data",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
+								},
+							},
+							{
+								Name: "postgres-tmp",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
+								},
+							},
+							{
+								Name: "postgres-var-tmp",
 								VolumeSource: corev1.VolumeSource{
 									EmptyDir: &corev1.EmptyDirVolumeSource{},
 								},
@@ -195,6 +215,12 @@ func GetAppStack(namespace string) []client.Object {
 									},
 								},
 								SecurityContext: getSecureSecurityContext(10002), // redis user
+								VolumeMounts: []corev1.VolumeMount{
+									{
+										Name:      "redis-tmp",
+										MountPath: "/tmp",
+									},
+								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("64Mi"),
@@ -204,6 +230,14 @@ func GetAppStack(namespace string) []client.Object {
 										corev1.ResourceMemory: resource.MustParse("128Mi"),
 										corev1.ResourceCPU:    resource.MustParse("100m"),
 									},
+								},
+							},
+						},
+						Volumes: []corev1.Volume{
+							{
+								Name: "redis-tmp",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
 								},
 							},
 						},
@@ -284,6 +318,10 @@ func GetAppStack(namespace string) []client.Object {
 										Name:      "prometheus-data",
 										MountPath: "/prometheus",
 									},
+									{
+										Name:      "prometheus-tmp",
+										MountPath: "/tmp",
+									},
 								},
 							},
 						},
@@ -300,6 +338,12 @@ func GetAppStack(namespace string) []client.Object {
 							},
 							{
 								Name: "prometheus-data",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
+								},
+							},
+							{
+								Name: "prometheus-tmp",
 								VolumeSource: corev1.VolumeSource{
 									EmptyDir: &corev1.EmptyDirVolumeSource{},
 								},
@@ -427,12 +471,22 @@ scrape_configs:
 										Name:      "grafana-data",
 										MountPath: "/var/lib/grafana",
 									},
+									{
+										Name:      "grafana-tmp",
+										MountPath: "/tmp",
+									},
 								},
 							},
 						},
 						Volumes: []corev1.Volume{
 							{
 								Name: "grafana-data",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
+								},
+							},
+							{
+								Name: "grafana-tmp",
 								VolumeSource: corev1.VolumeSource{
 									EmptyDir: &corev1.EmptyDirVolumeSource{},
 								},
@@ -530,6 +584,12 @@ scrape_configs:
 									},
 								},
 								SecurityContext: getSecureSecurityContext(10005), // node user
+								VolumeMounts: []corev1.VolumeMount{
+									{
+										Name:      "api-tmp",
+										MountPath: "/tmp",
+									},
+								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("64Mi"),
@@ -539,6 +599,14 @@ scrape_configs:
 										corev1.ResourceMemory: resource.MustParse("128Mi"),
 										corev1.ResourceCPU:    resource.MustParse("100m"),
 									},
+								},
+							},
+						},
+						Volumes: []corev1.Volume{
+							{
+								Name: "api-tmp",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
 								},
 							},
 						},
@@ -624,6 +692,10 @@ scrape_configs:
 										MountPath: "/etc/secrets",
 										ReadOnly:  true,
 									},
+									{
+										Name:      "user-tmp",
+										MountPath: "/tmp",
+									},
 								},
 							},
 						},
@@ -635,6 +707,12 @@ scrape_configs:
 										SecretName:  "api-secrets",
 										DefaultMode: ptr.To(int32(0400)),
 									},
+								},
+							},
+							{
+								Name: "user-tmp",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
 								},
 							},
 						},
@@ -715,6 +793,12 @@ scrape_configs:
 									},
 								},
 								SecurityContext: getSecureSecurityContext(10007), // ruby user
+								VolumeMounts: []corev1.VolumeMount{
+									{
+										Name:      "payment-tmp",
+										MountPath: "/tmp",
+									},
+								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("64Mi"),
@@ -724,6 +808,14 @@ scrape_configs:
 										corev1.ResourceMemory: resource.MustParse("128Mi"),
 										corev1.ResourceCPU:    resource.MustParse("100m"),
 									},
+								},
+							},
+						},
+						Volumes: []corev1.Volume{
+							{
+								Name: "payment-tmp",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
 								},
 							},
 						},
@@ -902,6 +994,10 @@ http {
 										MountPath: "/etc/nginx/nginx.conf",
 										SubPath:   "nginx.conf",
 									},
+									{
+										Name:      "nginx-tmp",
+										MountPath: "/tmp",
+									},
 								},
 								Command: []string{"nginx", "-g", "daemon off;"},
 								Resources: corev1.ResourceRequirements{
@@ -925,6 +1021,12 @@ http {
 											Name: "webapp-nginx-config",
 										},
 									},
+								},
+							},
+							{
+								Name: "nginx-tmp",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
 								},
 							},
 						},

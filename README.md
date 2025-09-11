@@ -2,6 +2,8 @@
 
 Sometimes, it's helpful to practice identifying security vulnerabilities in a running k8s cluster that's not production. So this is a very simple k8s operator that picks a random vulnerability from the [OWASP Kubernetes Top Ten](https://owasp.org/www-project-kubernetes-top-ten/) and configures a k3s cluster with that misconfiguration.
 
+## Owasp categories
+
 [K01: Insecure Workload Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K01-insecure-workload-configurations)
 
 [K02: Supply Chain Vulnerabilities](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K02-supply-chain-vulnerabilities)
@@ -31,7 +33,39 @@ The first thing to do is run some scanners to see what you can pick up (or you c
 - [kubescape](https://kubescape.io/docs/install-cli/) (for K01, K03, K07, K08)
 - kubeaudit (for K01, K06, K08) - deprecated, team recommends moving to kube-bench
 - [kube-bench](https://aquasecurity.github.io/kube-bench/v0.6.7/installation/) (for K09)
+- [kube-score](https://github.com/zegl/kube-score)
 - [trivy](https://trivy.dev/dev/getting-started/installation/) (for K02, once you've identified an insecure image...or you can run it in "k8s mode")
+
+### scanning commands
+
+Find the vulnerabilities by running one of the following scans:
+
+- scan the entire namespace with kubescape
+```sh
+$ kubescape scan --include-namespaces test-lab
+```
+
+- scan a specific deployment in the namespace with kubescape
+```sh
+$ kubescape scan workload Deployment/<deployment-name> --include-namespaces test-lab
+```
+
+- scan the entire namespace with trivy
+```sh
+$ trivy k8s --include-namespaces test-lab --report summary
+```
+
+- scan a specific deployment in the namespace with trivy
+```sh
+$ trivy k8s --include-namespaces test-lab --report summary deployments/<deployment-name>
+```
+
+- scan all the deployment yaml manifests with kube-score (this one has to scan file contents, so it's a bit gnarly)
+```sh
+$ kubectl api-resources --verbs=list --namespaced -o name \
+  | xargs -n1 -I{} bash -c "kubectl get {} -n test-lab -oyaml && echo ---" \
+  | kube-score score -
+```
 
 ## Sub-categories
 
