@@ -8,6 +8,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -247,6 +248,9 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 		logger.Info("All resources deleted, proceeding with reset", "namespace", namespace)
 	}
 
+	// Clean up any cluster-scoped RBAC resources from K03 vulnerabilities
+	r.cleanupClusterRBAC(ctx, namespace)
+
 	// Reset the status for a new round
 	lab.Status.ChosenVulnerability = ""
 	lab.Status.TargetResource = ""
@@ -281,6 +285,68 @@ func (r *VulnerableLabReconciler) writeClusterStatus(status string) {
 		// Log error but don't fail reconciliation
 		ctrl.Log.WithName("status-file").Error(err, "Failed to write cluster status file")
 	}
+}
+
+// cleanupClusterRBAC removes any cluster-scoped RBAC resources created by K03 vulnerabilities
+func (r *VulnerableLabReconciler) cleanupClusterRBAC(ctx context.Context, namespace string) {
+	logger := log.FromContext(ctx)
+
+	// Clean up ClusterRoles with namespace-specific names
+	clusterRoleNames := []string{
+		fmt.Sprintf("%s-secret-reader", namespace),
+		fmt.Sprintf("%s-node-reader", namespace),
+	}
+
+	for _, roleName := range clusterRoleNames {
+		clusterRole := &rbacv1.ClusterRole{}
+		if err := r.Get(ctx, client.ObjectKey{Name: roleName}, clusterRole); err == nil {
+			if err := r.Delete(ctx, clusterRole); err != nil && !errors.IsNotFound(err) {
+				logger.Error(err, "Failed to delete ClusterRole", "name", roleName)
+			} else {
+				logger.Info("Deleted ClusterRole", "name", roleName)
+			}
+		}
+	}
+
+	// Clean up ClusterRoleBindings with namespace-specific names
+	clusterRoleBindingNames := []string{
+		fmt.Sprintf("%s-cluster-access", namespace),
+		fmt.Sprintf("%s-secret-access", namespace),
+		fmt.Sprintf("%s-node-access", namespace),
+	}
+
+	for _, bindingName := range clusterRoleBindingNames {
+		clusterRoleBinding := &rbacv1.ClusterRoleBinding{}
+		if err := r.Get(ctx, client.ObjectKey{Name: bindingName}, clusterRoleBinding); err == nil {
+			if err := r.Delete(ctx, clusterRoleBinding); err != nil && !errors.IsNotFound(err) {
+				logger.Error(err, "Failed to delete ClusterRoleBinding", "name", bindingName)
+			} else {
+				logger.Info("Deleted ClusterRoleBinding", "name", bindingName)
+			}
+		}
+	}
+
+	// Clean up cross-namespace RBAC resources in kube-system (from K03:2)
+	kubeSystemRoleName := fmt.Sprintf("%s-system-access", namespace)
+	kubeSystemRole := &rbacv1.Role{}
+	if err := r.Get(ctx, client.ObjectKey{Name: kubeSystemRoleName, Namespace: "kube-system"}, kubeSystemRole); err == nil {
+		if err := r.Delete(ctx, kubeSystemRole); err != nil && !errors.IsNotFound(err) {
+			logger.Error(err, "Failed to delete kube-system Role", "name", kubeSystemRoleName)
+		} else {
+			logger.Info("Deleted kube-system Role", "name", kubeSystemRoleName)
+		}
+	}
+
+	kubeSystemBindingName := fmt.Sprintf("%s-system-binding", namespace)
+	kubeSystemBinding := &rbacv1.RoleBinding{}
+	if err := r.Get(ctx, client.ObjectKey{Name: kubeSystemBindingName, Namespace: "kube-system"}, kubeSystemBinding); err == nil {
+		if err := r.Delete(ctx, kubeSystemBinding); err != nil && !errors.IsNotFound(err) {
+			logger.Error(err, "Failed to delete kube-system RoleBinding", "name", kubeSystemBindingName)
+		} else {
+			logger.Info("Deleted kube-system RoleBinding", "name", kubeSystemBindingName)
+		}
+	}
+
 }
 
 // SetupWithManager sets up the controller with the Manager.
