@@ -1,0 +1,7 @@
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: k03-cluster-admin
+spec:
+  vulnerability: K03
+  subIssue: 0  # Cluster Admin Access

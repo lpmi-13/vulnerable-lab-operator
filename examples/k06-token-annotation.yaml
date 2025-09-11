@@ -1,0 +1,7 @@
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: k06-token-annotation
+spec:
+  vulnerability: K06
+  subIssue: 1  # Service account token annotation

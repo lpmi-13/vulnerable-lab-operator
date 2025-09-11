@@ -1,0 +1,7 @@
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: k01-capabilities
+spec:
+  vulnerability: K01
+  subIssue: 2  # Dangerous capabilities

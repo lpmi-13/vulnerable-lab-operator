@@ -1,0 +1,7 @@
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: k07-no-isolation
+spec:
+  vulnerability: K07
+  subIssue: 1  # Network isolation disabled

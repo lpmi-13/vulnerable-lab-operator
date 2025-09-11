@@ -33,6 +33,52 @@ The first thing to do is run some scanners to see what you can pick up (or you c
 - [kube-bench](https://aquasecurity.github.io/kube-bench/v0.6.7/installation/) (for K09)
 - [trivy](https://trivy.dev/dev/getting-started/installation/) (for K02, once you've identified an insecure image...or you can run it in "k8s mode")
 
+## Sub-categories
+
+Each vulnerability category has multiple sub-issues that are randomly selected:
+
+- K01 (Insecure Workload Configurations) - 3 sub-issues:
+
+  1. Privileged container - Sets privileged: true
+  2. Running as root - Sets runAsUser: 0
+  3. Dangerous capabilities - Adds SYS_ADMIN, NET_ADMIN capabilities
+
+- K02 (Supply Chain Vulnerabilities) - 5 sub-issues:
+
+  1. api: node:16-alpine (outdated vs node:22-alpine)
+  2. webapp: nginx:1.20-alpine (outdated vs nginx:1.25-alpine)
+  3. user-service: python:3.9-alpine (outdated vs python:3.13-alpine)
+  4. payment-service: ruby:3.0-alpine (outdated vs ruby:3.3-alpine)
+  5. grafana: grafana/grafana:9.0.0 (outdated vs grafana/grafana:12.0.0)
+
+- K03 (Overly Permissive RBAC) - 4 sub-issues:
+
+  1. Cluster Admin Access - Grants cluster-admin permissions
+  2. Secret Access - Grants broad secret access across cluster
+  3. Cross-Namespace Access - Grants access to kube-system namespace
+  4. Node Access - Grants access to node resources and metrics
+
+- K06 (Broken Authentication) - 4 sub-issues:
+
+  1. Auto-mount service account tokens - Sets automountServiceAccountToken: true ⭐
+  2. Default service account usage - Removes explicit serviceAccountName
+  3. Service account token annotation - Adds token requirement annotation
+  4. Default service account annotation - Adds temporary account annotation
+
+- K07 (Missing Network Segmentation) - 4 sub-issues:
+
+  1. Unrestricted pod-to-pod communication - Adds network policy disabled annotation
+  2. Network isolation disabled - Adds isolation disabled annotation
+  3. Database exposure - Changes PostgreSQL service to NodePort
+  4. Service exposure annotation - Adds external database access annotation
+
+- K08 (Secrets Management Failures) - 3 sub-issues:
+
+  1. Secret data in ConfigMaps - Stores sensitive data in ConfigMap instead of Secret
+  2. Hardcoded secrets annotation - Adds development mode annotation
+  3. Insecure volume permissions - Adds debugging enabled annotation
+
+
 
 ## Description
 
@@ -62,6 +108,12 @@ Quick-start: if nothing is happening, run these commands, in order:
 - make run
 - and then you can create the CRD. If you pass in `vulnerability: "random"` or `spec: {}`, then it selects randomly from the list of categories. If you instead want to specify which vulnerability, you can pass that in directly via `vulnerability: K05`.
 
+> examples of the final step are below, and it's the thing that actually creates the CRD...the reconciler won't do anything until that happens
+
+### Examples of creating a new CRD with varying levels of randomness
+
+complete random selection of sub-issue from within a random category:
+
 ```sh
 kubectl apply -f - <<EOF
 apiVersion: lab.security.lab/v1alpha1
@@ -73,7 +125,33 @@ spec:
 EOF
 ```
 
-(the final step is the thing that actually creates the CRD...the reconciler won't do anything until that happens)
+complete random selection of sub-issue from within a specific category:
+
+```sh
+kubectl apply -f - <<EOF
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: test-lab
+spec:
+  vulnerability: "K01"
+EOF
+```
+
+specific selection of a sub-issue from within a specific category:
+
+```sh
+kubectl apply -f - <<EOF
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: test-lab
+spec:
+  vulnerability: "K01"
+  subIssue: 0
+EOF
+```
+
 
 ### Prerequisites
 - go version v1.24.0+
@@ -192,7 +270,7 @@ go test ./internal/breaker/ -v
 **Note on Integration Tests**: The original Kubebuilder-generated controller and e2e integration tests have been removed because they require additional Kubernetes infrastructure dependencies (`kubebuilder`, `kind`, `etcd`, etc.). For an educational vulnerability lab operator, the unit tests that validate the core vulnerability application logic are sufficient and more practical. The integration tests mainly verified basic Kubernetes CRUD operations which are already well-tested by the controller-runtime framework.
 
 ## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
+PRs are always welcome, though I don't imagine anyone will be interested in this project.
 
 **NOTE:** Run `make help` for more information on all potential `make` targets
 

@@ -1,0 +1,7 @@
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: k03-cross-namespace
+spec:
+  vulnerability: K03
+  subIssue: 2  # Cross-Namespace Access

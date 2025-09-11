@@ -1,0 +1,7 @@
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: k02-user-service
+spec:
+  vulnerability: K02
+  subIssue: 2  # User-service vulnerable image (python:3.9-alpine)

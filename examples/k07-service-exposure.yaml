@@ -1,0 +1,7 @@
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: k07-service-exposure
+spec:
+  vulnerability: K07
+  subIssue: 3  # Service exposure annotation

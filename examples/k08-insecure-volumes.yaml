@@ -1,0 +1,7 @@
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: k08-insecure-volumes
+spec:
+  vulnerability: K08
+  subIssue: 2  # Insecure volume permissions

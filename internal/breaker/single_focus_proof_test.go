@@ -18,7 +18,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K01_Single_Security_Context_Change", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK01ToStack(appStack, target)
+			err := applyK01ToStack(appStack, target, nil)
 			if err != nil {
 				t.Fatalf("K01 iteration %d failed: %v", i, err)
 			}
@@ -30,7 +30,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K02_Single_Image_Change", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK02ToStack(appStack, target)
+			err := applyK02ToStack(appStack, target, nil)
 			if err != nil {
 				t.Fatalf("K02 iteration %d failed: %v", i, err)
 			}
@@ -42,7 +42,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K03_Single_RBAC_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK03ToStack(&appStack, target, namespace)
+			err := applyK03ToStack(&appStack, target, namespace, nil)
 			if err != nil {
 				t.Fatalf("K03 iteration %d failed: %v", i, err)
 			}
@@ -54,7 +54,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K06_Single_Auth_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK06ToStack(appStack, target)
+			err := applyK06ToStack(appStack, target, nil)
 			if err != nil {
 				t.Fatalf("K06 iteration %d failed: %v", i, err)
 			}
@@ -66,7 +66,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K07_Single_Network_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK07ToStack(appStack, target, namespace)
+			err := applyK07ToStack(appStack, target, namespace, nil)
 			if err != nil {
 				t.Fatalf("K07 iteration %d failed: %v", i, err)
 			}
@@ -78,7 +78,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K08_Single_Secrets_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK08ToStack(&appStack, target, namespace)
+			err := applyK08ToStack(&appStack, target, namespace, nil)
 			if err != nil {
 				t.Fatalf("K08 iteration %d failed: %v", i, err)
 			}
@@ -108,27 +108,27 @@ func TestRandomizationWorks(t *testing.T) {
 	}{
 		{"K01", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK01ToStack(appStack, target)
+			return applyK01ToStack(appStack, target, nil)
 		}},
 		{"K02", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK02ToStack(appStack, target)
+			return applyK02ToStack(appStack, target, nil)
 		}},
 		{"K03", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK03ToStack(&appStack, target, namespace)
+			return applyK03ToStack(&appStack, target, namespace, nil)
 		}},
 		{"K06", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK06ToStack(appStack, target)
+			return applyK06ToStack(appStack, target, nil)
 		}},
 		{"K07", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK07ToStack(appStack, target, namespace)
+			return applyK07ToStack(appStack, target, namespace, nil)
 		}},
 		{"K08", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK08ToStack(&appStack, target, namespace)
+			return applyK08ToStack(&appStack, target, namespace, nil)
 		}},
 	}
 

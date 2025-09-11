@@ -91,13 +91,21 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	if lab.Spec.Vulnerability != "" && lab.Spec.Vulnerability != "random" {
 		// Use specified vulnerability category
 		chosenVuln = lab.Spec.Vulnerability
-		logger.Info("Using specified vulnerability category", "vulnerability", chosenVuln)
+		if lab.Spec.SubIssue != nil {
+			logger.Info("Using specified vulnerability category and sub-issue", "vulnerability", chosenVuln, "subIssue", *lab.Spec.SubIssue)
+		} else {
+			logger.Info("Using specified vulnerability category with random sub-issue", "vulnerability", chosenVuln)
+		}
 	} else {
 		// Randomly choose a vulnerability type
 		vulnerabilities := []string{"K01", "K02", "K03", "K06", "K07", "K08"}
 		vulnIndex := r.selectRandomIndex(len(vulnerabilities))
 		chosenVuln = vulnerabilities[vulnIndex]
-		logger.Info("Randomly selected vulnerability category", "vulnerability", chosenVuln)
+		if lab.Spec.SubIssue != nil {
+			logger.Info("Randomly selected vulnerability category with specified sub-issue", "vulnerability", chosenVuln, "subIssue", *lab.Spec.SubIssue)
+		} else {
+			logger.Info("Randomly selected vulnerability category and sub-issue", "vulnerability", chosenVuln)
+		}
 	}
 
 	// Choose appropriate targets based on vulnerability type
@@ -123,7 +131,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	targetDeployment := viableTargets[targetIndex]
 
 	// Use BreakCluster instead of InitializeLab
-	if err := breaker.BreakCluster(ctx, r.Client, chosenVuln, targetDeployment, namespace); err != nil {
+	if err := breaker.BreakCluster(ctx, r.Client, chosenVuln, targetDeployment, namespace, lab.Spec.SubIssue); err != nil {
 		logger.Error(err, "Failed to apply vulnerability")
 
 		// Get the latest version of the resource before updating

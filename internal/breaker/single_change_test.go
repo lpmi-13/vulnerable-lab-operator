@@ -33,7 +33,7 @@ func TestK01MakesFocusedChanges(t *testing.T) {
 			t.Fatal("Could not find api deployment in baseline stack")
 		}
 
-		err := applyK01ToStack(appStack, "api")
+		err := applyK01ToStack(appStack, "api", nil)
 		if err != nil {
 			t.Fatalf("applyK01ToStack failed: %v", err)
 		}
@@ -116,7 +116,7 @@ func TestK02MakesFocusedChanges(t *testing.T) {
 
 		originalImage := originalDep.Spec.Template.Spec.Containers[0].Image
 
-		err := applyK02ToStack(appStack, "api")
+		err := applyK02ToStack(appStack, "api", nil)
 		if err != nil {
 			t.Fatalf("applyK02ToStack failed: %v", err)
 		}
@@ -164,7 +164,7 @@ func TestK03MakesFocusedChanges(t *testing.T) {
 		appStack := baseline.GetAppStack(namespace)
 		originalStackSize := len(appStack)
 
-		err := applyK03ToStack(&appStack, "api", namespace)
+		err := applyK03ToStack(&appStack, "api", namespace, nil)
 		if err != nil {
 			t.Fatalf("applyK03ToStack failed: %v", err)
 		}
@@ -219,7 +219,7 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 			t.Fatal("Could not find api deployment in baseline stack")
 		}
 
-		err := applyK06ToStack(appStack, "api")
+		err := applyK06ToStack(appStack, "api", nil)
 		if err != nil {
 			t.Fatalf("applyK06ToStack failed: %v", err)
 		}
@@ -319,7 +319,7 @@ func TestK07MakesFocusedChanges(t *testing.T) {
 			t.Fatal("Could not find postgres-service in baseline stack")
 		}
 
-		err := applyK07ToStack(appStack, "api", namespace)
+		err := applyK07ToStack(appStack, "api", namespace, nil)
 		if err != nil {
 			t.Fatalf("applyK07ToStack failed: %v", err)
 		}
@@ -401,7 +401,7 @@ func TestK08MakesFocusedChanges(t *testing.T) {
 			t.Fatal("Could not find api deployment in baseline stack")
 		}
 
-		err := applyK08ToStack(&appStack, "api", namespace)
+		err := applyK08ToStack(&appStack, "api", namespace, nil)
 		if err != nil {
 			t.Fatalf("applyK08ToStack failed: %v", err)
 		}
@@ -481,9 +481,9 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 			name string
 			fn   func([]client.Object, string) error
 		}{
-			{"K01", func(stack []client.Object, t string) error { return applyK01ToStack(stack, t) }},
-			{"K02", func(stack []client.Object, t string) error { return applyK02ToStack(stack, t) }},
-			{"K06", func(stack []client.Object, t string) error { return applyK06ToStack(stack, t) }},
+			{"K01", func(stack []client.Object, t string) error { return applyK01ToStack(stack, t, nil) }},
+			{"K02", func(stack []client.Object, t string) error { return applyK02ToStack(stack, t, nil) }},
+			{"K06", func(stack []client.Object, t string) error { return applyK06ToStack(stack, t, nil) }},
 		}
 
 		for _, vuln := range vulnerabilities {
@@ -499,8 +499,8 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 			name string
 			fn   func(*[]client.Object, string, string) error
 		}{
-			{"K03", applyK03ToStack},
-			{"K08", applyK08ToStack},
+			{"K03", func(stack *[]client.Object, target, ns string) error { return applyK03ToStack(stack, target, ns, nil) }},
+			{"K08", func(stack *[]client.Object, target, ns string) error { return applyK08ToStack(stack, target, ns, nil) }},
 		}
 
 		// K07 doesn't add resources, so it uses the original signature
@@ -508,7 +508,7 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 			name string
 			fn   func([]client.Object, string, string) error
 		}{
-			{"K07", applyK07ToStack},
+			{"K07", func(stack []client.Object, target, ns string) error { return applyK07ToStack(stack, target, ns, nil) }},
 		}
 
 		for _, vuln := range namespacedVulns {
