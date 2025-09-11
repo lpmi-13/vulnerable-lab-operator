@@ -190,7 +190,7 @@ func applyK02ToStack(appStack []client.Object, targetDeployment string, subIssue
 		image      string
 	}{
 		{"api", "node:16-alpine"},              // 0: vs current node:22-alpine
-		{"webapp", "nginx:1.20-alpine"},        // 1: vs current nginx:1.25-alpine
+		{"webapp", "nginx:1.20-alpine"},        // 1: vs current nginx:1.29.1-alpine
 		{"user-service", "python:3.9-alpine"},  // 2: vs current python:3.13-alpine
 		{"payment-service", "ruby:3.0-alpine"}, // 3: vs current ruby:3.3-alpine
 		{"grafana", "grafana/grafana:9.0.0"},   // 4: vs current grafana/grafana:12.0.0

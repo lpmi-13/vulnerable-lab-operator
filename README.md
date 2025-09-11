@@ -46,7 +46,7 @@ Each vulnerability category has multiple sub-issues that are randomly selected:
 - K02 (Supply Chain Vulnerabilities) - 5 sub-issues:
 
   1. api: node:16-alpine (outdated vs node:22-alpine)
-  2. webapp: nginx:1.20-alpine (outdated vs nginx:1.25-alpine)
+  2. webapp: nginx:1.20-alpine (outdated vs nginx:1.29.1-alpine)
   3. user-service: python:3.9-alpine (outdated vs python:3.13-alpine)
   4. payment-service: ruby:3.0-alpine (outdated vs ruby:3.3-alpine)
   5. grafana: grafana/grafana:9.0.0 (outdated vs grafana/grafana:12.0.0)

@@ -881,7 +881,7 @@ http {
 						Containers: []corev1.Container{
 							{
 								Name:  "web-ui",
-								Image: "nginx:1.25-alpine",
+								Image: "nginx:1.29.1-alpine",
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 8080,
