@@ -51,7 +51,7 @@ func GetAppStack(namespace string) []client.Object {
 						Containers: []corev1.Container{
 							{
 								Name:  "postgres",
-								Image: "postgres:16-alpine",
+								Image: "postgres:17-alpine",
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 5432,
@@ -376,7 +376,7 @@ scrape_configs:
 						Containers: []corev1.Container{
 							{
 								Name:  "grafana",
-								Image: "grafana/grafana:12.0.0",
+								Image: "grafana/grafana:12.2.0-17630182352-ubuntu",
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 3000,
