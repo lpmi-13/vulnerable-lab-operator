@@ -384,12 +384,26 @@ scrape_configs:
 								},
 								Env: []corev1.EnvVar{
 									{
-										Name:  "GF_SECURITY_ADMIN_USER",
-										Value: "admin",
+										Name: "GF_SECURITY_ADMIN_USER",
+										ValueFrom: &corev1.EnvVarSource{
+											SecretKeyRef: &corev1.SecretKeySelector{
+												LocalObjectReference: corev1.LocalObjectReference{
+													Name: "grafana-credentials",
+												},
+												Key: "admin-user",
+											},
+										},
 									},
 									{
-										Name:  "GF_SECURITY_ADMIN_PASSWORD",
-										Value: "admin",
+										Name: "GF_SECURITY_ADMIN_PASSWORD",
+										ValueFrom: &corev1.EnvVarSource{
+											SecretKeyRef: &corev1.SecretKeySelector{
+												LocalObjectReference: corev1.LocalObjectReference{
+													Name: "grafana-credentials",
+												},
+												Key: "admin-password",
+											},
+										},
 									},
 									{
 										Name:  "GF_USERS_ALLOW_SIGN_UP",
@@ -766,6 +780,20 @@ scrape_configs:
 			},
 			StringData: map[string]string{
 				"password": "redis-secure-password-123",
+			},
+			Type: corev1.SecretTypeOpaque,
+		},
+
+		// Grafana Credentials Secret
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "grafana-credentials",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "monitoring"},
+			},
+			StringData: map[string]string{
+				"admin-user":     "admin",
+				"admin-password": "admin",
 			},
 			Type: corev1.SecretTypeOpaque,
 		},
