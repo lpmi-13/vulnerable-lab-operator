@@ -811,6 +811,32 @@ scrape_configs:
 			Type: corev1.SecretTypeTLS,
 		},
 
+		// Webapp Nginx Configuration
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "webapp-nginx-config",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "frontend"},
+			},
+			Data: map[string]string{
+				"default.conf": `server {
+    listen 8080;
+    listen [::]:8080;
+    server_name localhost;
+
+    location / {
+        root   /usr/share/nginx/html;
+        index  index.html index.htm;
+    }
+
+    error_page   500 502 503 504  /50x.html;
+    location = /50x.html {
+        root   /usr/share/nginx/html;
+    }
+}`,
+			},
+		},
+
 		// 9. Web App Frontend
 		&appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
@@ -831,9 +857,8 @@ scrape_configs:
 						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
-								Name:    "web-ui",
-								Image:   "nginx:1.25-alpine",
-								Command: []string{"sh", "-c", "sed -i 's/listen.*80;/listen 8080;/' /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"},
+								Name:  "web-ui",
+								Image: "nginx:1.25-alpine",
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 8080,
@@ -847,6 +872,12 @@ scrape_configs:
 									},
 								},
 								SecurityContext: getSecureSecurityContext(10008), // nginx user
+								VolumeMounts: []corev1.VolumeMount{
+									{
+										Name:      "nginx-config",
+										MountPath: "/etc/nginx/conf.d",
+									},
+								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("32Mi"),
@@ -855,6 +886,18 @@ scrape_configs:
 									Limits: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("64Mi"),
 										corev1.ResourceCPU:    resource.MustParse("50m"),
+									},
+								},
+							},
+						},
+						Volumes: []corev1.Volume{
+							{
+								Name: "nginx-config",
+								VolumeSource: corev1.VolumeSource{
+									ConfigMap: &corev1.ConfigMapVolumeSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: "webapp-nginx-config",
+										},
 									},
 								},
 							},
