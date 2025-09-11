@@ -13,21 +13,21 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: vulnerablelab-editor-role
 rules:
-- apiGroups:
-  - lab.security.lab
-  resources:
-  - vulnerablelabs
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - lab.security.lab
-  resources:
-  - vulnerablelabs/status
-  verbs:
-  - get
+  - apiGroups:
+      - lab.security.lab
+    resources:
+      - vulnerablelabs
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - lab.security.lab
+    resources:
+      - vulnerablelabs/status
+    verbs:
+      - get

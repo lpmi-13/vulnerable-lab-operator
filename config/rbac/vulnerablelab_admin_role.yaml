@@ -13,15 +13,15 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: vulnerablelab-admin-role
 rules:
-- apiGroups:
-  - lab.security.lab
-  resources:
-  - vulnerablelabs
-  verbs:
-  - '*'
-- apiGroups:
-  - lab.security.lab
-  resources:
-  - vulnerablelabs/status
-  verbs:
-  - get
+  - apiGroups:
+      - lab.security.lab
+    resources:
+      - vulnerablelabs
+    verbs:
+      - '*'
+  - apiGroups:
+      - lab.security.lab
+    resources:
+      - vulnerablelabs/status
+    verbs:
+      - get
