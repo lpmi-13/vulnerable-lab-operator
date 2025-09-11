@@ -47,6 +47,7 @@ spec:
                 - K06
                 - K07
                 - K08
+                - random
                 type: string
             type: object
           status:

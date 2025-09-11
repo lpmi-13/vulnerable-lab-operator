@@ -1,0 +1,5 @@
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: default-lab
+spec: {}  # Empty spec defaults to random selection

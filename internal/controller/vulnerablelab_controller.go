@@ -86,10 +86,19 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	logger := log.FromContext(ctx)
 	logger.Info("Initializing new lab environment", "namespace", namespace)
 
-	// Randomly choose a vulnerability type
-	vulnerabilities := []string{"K01", "K02", "K03", "K06", "K07", "K08"}
-	vulnIndex := r.selectRandomIndex(len(vulnerabilities))
-	chosenVuln := vulnerabilities[vulnIndex]
+	// Choose vulnerability type based on spec or randomly
+	var chosenVuln string
+	if lab.Spec.Vulnerability != "" && lab.Spec.Vulnerability != "random" {
+		// Use specified vulnerability category
+		chosenVuln = lab.Spec.Vulnerability
+		logger.Info("Using specified vulnerability category", "vulnerability", chosenVuln)
+	} else {
+		// Randomly choose a vulnerability type
+		vulnerabilities := []string{"K01", "K02", "K03", "K06", "K07", "K08"}
+		vulnIndex := r.selectRandomIndex(len(vulnerabilities))
+		chosenVuln = vulnerabilities[vulnIndex]
+		logger.Info("Randomly selected vulnerability category", "vulnerability", chosenVuln)
+	}
 
 	// Choose appropriate targets based on vulnerability type
 	var viableTargets []string

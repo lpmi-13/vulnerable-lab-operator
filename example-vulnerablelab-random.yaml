@@ -1,0 +1,6 @@
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: random-lab
+spec:
+  vulnerability: random  # Explicitly random selection

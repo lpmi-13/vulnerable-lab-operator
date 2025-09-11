@@ -60,6 +60,8 @@ Quick-start: if nothing is happening, run these commands, in order:
 - make manifests (you probably don't need this unless you updated code in the operator)
 - make install
 - make run
+- and then you can create the CRD. If you pass in `vulnerability: "random"` or `spec: {}`, then it selects randomly from the list of categories. If you instead want to specify which vulnerability, you can pass that in directly via `vulnerability: K05`.
+
 ```sh
 kubectl apply -f - <<EOF
 apiVersion: lab.security.lab/v1alpha1
@@ -67,9 +69,10 @@ kind: VulnerableLab
 metadata:
   name: test-lab
 spec:
-  vulnerability: "K01"
+  vulnerability: "random"
 EOF
 ```
+
 (the final step is the thing that actually creates the CRD...the reconciler won't do anything until that happens)
 
 ### Prerequisites
