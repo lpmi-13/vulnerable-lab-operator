@@ -95,6 +95,11 @@ help: ## Display this help.
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	@echo "Applying minimal formatting to generated files..."
+	@find config/crd/bases -name "*.yaml" -exec sed -i 's/[[:space:]]*$$//' {} \;
+	@find config/crd/bases -name "*.yaml" -exec sed -i -e '$$a\' {} \;
+	@if [ -f config/rbac/role.yaml ]; then sed -i 's/[[:space:]]*$$//' config/rbac/role.yaml; fi
+	@if [ -f config/rbac/role.yaml ]; then sed -i -e '$$a\' config/rbac/role.yaml; fi
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
