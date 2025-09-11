@@ -58,12 +58,11 @@ Each vulnerability category has multiple sub-issues that are randomly selected:
   3. Cross-Namespace Access - Grants access to kube-system namespace
   4. Node Access - Grants access to node resources and metrics
 
-- K06 (Broken Authentication) - 4 sub-issues:
+- K06 (Broken Authentication) - 3 sub-issues:
 
-  1. Auto-mount service account tokens - Sets automountServiceAccountToken: true ⭐
-  2. Default service account usage - Removes explicit serviceAccountName
-  3. Service account token annotation - Adds token requirement annotation
-  4. Default service account annotation - Adds temporary account annotation
+  1. Default service account usage - Removes explicit serviceAccountName
+  2. Service account token annotation - Adds token requirement annotation
+  3. Default service account annotation - Adds temporary account annotation
 
 - K07 (Missing Network Segmentation) - 4 sub-issues:
 

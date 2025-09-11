@@ -240,21 +240,13 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 		// Check that at least ONE K06 authentication vulnerability was applied
 		vulnerabilityFound := false
 
-		// Check 1: Auto-mounted service account tokens
-		if modifiedDep.Spec.Template.Spec.AutomountServiceAccountToken != nil && *modifiedDep.Spec.Template.Spec.AutomountServiceAccountToken {
-			if originalDep.Spec.Template.Spec.AutomountServiceAccountToken == nil || !*originalDep.Spec.Template.Spec.AutomountServiceAccountToken {
-				vulnerabilityFound = true
-				t.Logf("K06 iteration %d: Applied auto-mount service account tokens", i)
-			}
-		}
-
-		// Check 2: Service account name removed (default service account usage)
+		// Check 1: Service account name removed (default service account usage)
 		if modifiedDep.Spec.Template.Spec.ServiceAccountName == "" && originalDep.Spec.Template.Spec.ServiceAccountName != "" {
 			vulnerabilityFound = true
 			t.Logf("K06 iteration %d: Applied default service account usage", i)
 		}
 
-		// Check 3: Environment variables changed (hardcoded credentials or exposed auth)
+		// Check 2: Environment variables changed (hardcoded credentials or exposed auth)
 		if len(modifiedDep.Spec.Template.Spec.Containers[0].Env) != len(originalDep.Spec.Template.Spec.Containers[0].Env) {
 			vulnerabilityFound = true
 			t.Logf("K06 iteration %d: Applied environment variable changes", i)
@@ -272,7 +264,7 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 			}
 		}
 
-		// Check 4: Service account token annotation
+		// Check 3: Service account token annotation
 		if modifiedDep.Spec.Template.Annotations != nil {
 			if _, exists := modifiedDep.Spec.Template.Annotations["kubernetes.io/service-account.token"]; exists {
 				vulnerabilityFound = true
@@ -280,7 +272,7 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 			}
 		}
 
-		// Check 5: Default service account annotation
+		// Check 4: Default service account annotation
 		if modifiedDep.Spec.Template.Annotations != nil {
 			if _, exists := modifiedDep.Spec.Template.Annotations["auth.kubernetes.io/default-account"]; exists {
 				vulnerabilityFound = true
