@@ -819,19 +819,42 @@ scrape_configs:
 				Labels:    map[string]string{"app.kubernetes.io/component": "frontend"},
 			},
 			Data: map[string]string{
-				"default.conf": `server {
-    listen 8080;
-    listen [::]:8080;
-    server_name localhost;
+				"nginx.conf": `# Run nginx as non-root user
+# PID file in writable location
+pid /tmp/nginx.pid;
 
-    location / {
-        root   /usr/share/nginx/html;
-        index  index.html index.htm;
-    }
+events {
+    worker_connections 1024;
+}
 
-    error_page   500 502 503 504  /50x.html;
-    location = /50x.html {
-        root   /usr/share/nginx/html;
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    # Use /tmp for cache directories (writable by non-root)
+    proxy_temp_path /tmp/proxy_temp;
+    client_body_temp_path /tmp/client_temp;
+    fastcgi_temp_path /tmp/fastcgi_temp;
+    uwsgi_temp_path /tmp/uwsgi_temp;
+    scgi_temp_path /tmp/scgi_temp;
+
+    sendfile        on;
+    keepalive_timeout  65;
+
+    server {
+        listen 8080;
+        listen [::]:8080;
+        server_name localhost;
+
+        location / {
+            root   /usr/share/nginx/html;
+            index  index.html index.htm;
+        }
+
+        error_page   500 502 503 504  /50x.html;
+        location = /50x.html {
+            root   /usr/share/nginx/html;
+        }
     }
 }`,
 			},
@@ -875,9 +898,11 @@ scrape_configs:
 								VolumeMounts: []corev1.VolumeMount{
 									{
 										Name:      "nginx-config",
-										MountPath: "/etc/nginx/conf.d",
+										MountPath: "/etc/nginx/nginx.conf",
+										SubPath:   "nginx.conf",
 									},
 								},
+								Command: []string{"nginx", "-g", "daemon off;"},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("32Mi"),
