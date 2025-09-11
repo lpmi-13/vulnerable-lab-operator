@@ -831,11 +831,12 @@ scrape_configs:
 						ServiceAccountName: "restricted-sa",
 						Containers: []corev1.Container{
 							{
-								Name:  "web-ui",
-								Image: "nginx:1.25-alpine",
+								Name:    "web-ui",
+								Image:   "nginx:1.25-alpine",
+								Command: []string{"sh", "-c", "sed -i 's/listen.*80;/listen 8080;/' /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"},
 								Ports: []corev1.ContainerPort{
 									{
-										ContainerPort: 80,
+										ContainerPort: 8080,
 										Name:          "http",
 									},
 								},
@@ -845,6 +846,7 @@ scrape_configs:
 										Value: "http://api-service:9898",
 									},
 								},
+								SecurityContext: getSecureSecurityContext(10008), // nginx user
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory: resource.MustParse("32Mi"),
@@ -871,7 +873,7 @@ scrape_configs:
 				Selector: map[string]string{"app": "webapp"},
 				Ports: []corev1.ServicePort{
 					{
-						Port:       80,
+						Port:       8080,
 						TargetPort: intstr.FromString("http"),
 						Name:       "http",
 					},
@@ -899,7 +901,7 @@ scrape_configs:
 										Backend: networkingv1.IngressBackend{
 											Service: &networkingv1.IngressServiceBackend{
 												Name: "webapp-service",
-												Port: networkingv1.ServiceBackendPort{Number: 80},
+												Port: networkingv1.ServiceBackendPort{Number: 8080},
 											},
 										},
 									},
