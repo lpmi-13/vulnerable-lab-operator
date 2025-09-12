@@ -276,7 +276,7 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 	// IMPORTANT: We only clear Status fields, NOT Spec fields
 	// This is what enables the persistence behavior:
 	//   - Spec.Vulnerability (user input) persists across resets
-	//   - Spec.SubIssue (user input) persists across resets  
+	//   - Spec.SubIssue (user input) persists across resets
 	//   - Status.ChosenVulnerability (runtime state) gets cleared
 	//   - Status.TargetResource (runtime state) gets cleared
 	// When initializeLab() runs again, it will check the persistent Spec fields
