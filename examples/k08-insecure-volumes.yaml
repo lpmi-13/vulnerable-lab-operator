@@ -1,6 +1,7 @@
 apiVersion: lab.security.lab/v1alpha1
 kind: VulnerableLab
 metadata:
+  namespace: test-lab
   name: vulnerablelab
 spec:
   vulnerability: K08
