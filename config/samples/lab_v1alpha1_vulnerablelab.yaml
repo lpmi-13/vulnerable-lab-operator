@@ -1,9 +1,10 @@
 apiVersion: lab.security.lab/v1alpha1
 kind: VulnerableLab
 metadata:
+  namespace: test-lab
   labels:
     app.kubernetes.io/name: vulnerable-k8s-operator
     app.kubernetes.io/managed-by: kustomize
-  name: vulnerablelab-sample
+  name: vulnerablelab
 spec:
-# TODO(user): Add fields here
+  vulnerability: "random"
