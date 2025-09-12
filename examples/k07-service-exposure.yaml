@@ -1,8 +1,7 @@
 apiVersion: lab.security.lab/v1alpha1
 kind: VulnerableLab
 metadata:
-  namespace: test-lab
-  name: vulnerablelab
+  name: test-lab
 spec:
   vulnerability: K07
   subIssue: 3  # Service exposure annotation
