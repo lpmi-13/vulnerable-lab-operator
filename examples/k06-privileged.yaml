@@ -1,0 +1,7 @@
+apiVersion: lab.security.lab/v1alpha1
+kind: VulnerableLab
+metadata:
+  name: k06-privileged
+spec:
+  vulnerability: K06
+  subIssue: 5  # Privileged container with volume access

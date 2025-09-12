@@ -200,6 +200,7 @@ func TestK03MakesFocusedChanges(t *testing.T) {
 	}
 }
 
+//nolint:gocyclo // Test function needs to check multiple vulnerability types
 func TestK06MakesFocusedChanges(t *testing.T) {
 	namespace := "test-k06-focused"
 
@@ -277,6 +278,33 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 			if _, exists := modifiedDep.Spec.Template.Annotations["auth.kubernetes.io/default-account"]; exists {
 				vulnerabilityFound = true
 				t.Logf("K06 iteration %d: Applied default service account annotation", i)
+			}
+		}
+
+		// Check 5: Missing fsGroup in PodSecurityContext (new storage-related vuln)
+		// This vulnerability creates a PodSecurityContext without fsGroup
+		if modifiedDep.Spec.Template.Spec.SecurityContext != nil &&
+			(originalDep.Spec.Template.Spec.SecurityContext == nil ||
+				modifiedDep.Spec.Template.Spec.SecurityContext.FSGroup == nil) {
+			vulnerabilityFound = true
+			t.Logf("K06 iteration %d: Applied missing fsGroup vulnerability", i)
+		}
+
+		// Check 6: Root user with volume access (new storage-related vuln)
+		for _, cont := range modifiedDep.Spec.Template.Spec.Containers {
+			if cont.SecurityContext != nil && cont.SecurityContext.RunAsUser != nil && *cont.SecurityContext.RunAsUser == 0 {
+				vulnerabilityFound = true
+				t.Logf("K06 iteration %d: Applied root user with volume access vulnerability", i)
+				break
+			}
+		}
+
+		// Check 7: Privileged container with volume access (new storage-related vuln)
+		for _, cont := range modifiedDep.Spec.Template.Spec.Containers {
+			if cont.SecurityContext != nil && cont.SecurityContext.Privileged != nil && *cont.SecurityContext.Privileged {
+				vulnerabilityFound = true
+				t.Logf("K06 iteration %d: Applied privileged container with volume access vulnerability", i)
+				break
 			}
 		}
 

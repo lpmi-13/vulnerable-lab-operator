@@ -471,14 +471,14 @@ func applyK06ToStack(appStack []client.Object, targetDeployment string, subIssue
 			// Choose vulnerability type based on subIssue parameter or randomly
 			var vulnType int
 			if subIssue != nil {
-				if *subIssue < 0 || *subIssue > 2 {
-					return fmt.Errorf("subIssue %d out of range for K06 (valid: 0-2)", *subIssue)
+				if *subIssue < 0 || *subIssue > 5 {
+					return fmt.Errorf("subIssue %d out of range for K06 (valid: 0-5)", *subIssue)
 				}
 				vulnType = *subIssue
 			} else {
-				// Randomly choose one of three K06 vulnerability types
+				// Randomly choose one of six K06 vulnerability types
 				localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
-				vulnType = localRand.Intn(3)
+				vulnType = localRand.Intn(6)
 			}
 
 			switch vulnType {
@@ -496,6 +496,28 @@ func applyK06ToStack(appStack []client.Object, targetDeployment string, subIssue
 					dep.Spec.Template.Annotations = make(map[string]string)
 				}
 				dep.Spec.Template.Annotations["auth.kubernetes.io/default-account"] = "temporary"
+
+			case 3: // Missing fsGroup in PodSecurityContext (flagged by Kubescape C-0057)
+				// Add a PodSecurityContext with FSGroup, then remove it to create the vulnerability
+				if dep.Spec.Template.Spec.SecurityContext == nil {
+					dep.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{}
+				}
+				dep.Spec.Template.Spec.SecurityContext.FSGroup = nil // Remove fsGroup to create vulnerability
+
+			case 4: // Root user with volume access (flagged by Kubescape C-0013)
+				for i := range dep.Spec.Template.Spec.Containers {
+					if dep.Spec.Template.Spec.Containers[i].SecurityContext != nil {
+						dep.Spec.Template.Spec.Containers[i].SecurityContext.RunAsUser = ptr.To(int64(0))
+						// Note: keeping runAsNonRoot unchanged - only modifying runAsUser creates the vulnerability
+					}
+				}
+
+			case 5: // Privileged container with volume access (flagged by Kubescape C-0016)
+				for i := range dep.Spec.Template.Spec.Containers {
+					if dep.Spec.Template.Spec.Containers[i].SecurityContext != nil {
+						dep.Spec.Template.Spec.Containers[i].SecurityContext.Privileged = ptr.To(true)
+					}
+				}
 			}
 
 			return nil

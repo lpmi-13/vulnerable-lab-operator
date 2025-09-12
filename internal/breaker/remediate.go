@@ -243,6 +243,30 @@ func checkK06(ctx context.Context, c client.Client, targetDeployment, namespace 
 		}
 	}
 
+	// Check for missing fsGroup in PodSecurityContext
+	if dep.Spec.Template.Spec.SecurityContext == nil || dep.Spec.Template.Spec.SecurityContext.FSGroup == nil {
+		logger.Info("K06 vulnerability still active: missing fsGroup in PodSecurityContext", "target", targetDeployment)
+		vulnerabilitiesFound = true
+	}
+
+	// Check for containers running as root
+	for _, cont := range dep.Spec.Template.Spec.Containers {
+		if cont.SecurityContext != nil && cont.SecurityContext.RunAsUser != nil && *cont.SecurityContext.RunAsUser == 0 {
+			logger.Info("K06 vulnerability still active: container running as root with volume access", "target", targetDeployment, "container", cont.Name)
+			vulnerabilitiesFound = true
+			break
+		}
+	}
+
+	// Check for privileged containers with volume access
+	for _, cont := range dep.Spec.Template.Spec.Containers {
+		if cont.SecurityContext != nil && cont.SecurityContext.Privileged != nil && *cont.SecurityContext.Privileged {
+			logger.Info("K06 vulnerability still active: privileged container with volume access", "target", targetDeployment, "container", cont.Name)
+			vulnerabilitiesFound = true
+			break
+		}
+	}
+
 	if vulnerabilitiesFound {
 		return false, nil
 	}

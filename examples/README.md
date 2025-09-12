@@ -40,6 +40,9 @@ kubectl get vulnerablelab k01-privileged -o yaml
 - `0`: Default service account usage (removes explicit serviceAccountName)
 - `1`: Service account token annotation (adds token requirement annotation)
 - `2`: Default service account annotation (adds temporary account annotation)
+- `3`: Missing fsGroup in PodSecurityContext (creates PodSecurityContext without fsGroup)
+- `4`: Root user with volume access (sets runAsUser: 0)
+- `5`: Privileged container with volume access (sets privileged: true)
 
 ### K07 - Missing Network Segmentation
 - `0`: Unrestricted pod-to-pod communication (network policy disabled annotation)
@@ -66,6 +69,9 @@ kubectl apply -f k01-capabilities.yaml
 kubectl apply -f k06-default-account.yaml
 kubectl apply -f k06-token-annotation.yaml
 kubectl apply -f k06-account-annotation.yaml
+kubectl apply -f k06-missing-fsgroup.yaml
+kubectl apply -f k06-root-user.yaml
+kubectl apply -f k06-privileged.yaml
 
 # etc...
 ```

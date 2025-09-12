@@ -59,7 +59,7 @@ func TestSingleFocusProof(t *testing.T) {
 				t.Fatalf("K06 iteration %d failed: %v", i, err)
 			}
 		}
-		t.Log("✓ K06 applies exactly ONE random authentication vulnerability (auto-mount tokens, default SA, or service account annotations)")
+		t.Log("✓ K06 applies exactly ONE random authentication vulnerability (service account, tokens, annotations, or storage-related security contexts)")
 	})
 
 	// Test K07 - Network Segmentation
