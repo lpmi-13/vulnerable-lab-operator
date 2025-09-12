@@ -1,7 +1,7 @@
 apiVersion: lab.security.lab/v1alpha1
 kind: VulnerableLab
 metadata:
-  name: k02-grafana
+  name: vulnerablelab
 spec:
   vulnerability: K02
   subIssue: 4  # Grafana vulnerable image (grafana/grafana:9.0.0)

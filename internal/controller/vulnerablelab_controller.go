@@ -88,23 +88,44 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	logger.Info("Initializing new lab environment", "namespace", namespace)
 
 	// Choose vulnerability type based on spec or randomly
+	// This logic implements three different persistence behaviors across remediation cycles:
+	//
+	// 1. Complete randomization (vulnerability: "random" or empty):
+	//    - Selects a new random category AND sub-issue after each remediation
+	//    - Best for general vulnerability identification practice
+	//
+	// 2. Category persistence (vulnerability: "K03", no subIssue specified):
+	//    - Always uses the same category (K03) but selects random sub-issues
+	//    - Best for focused practice on a specific vulnerability category
+	//    - Spec.Vulnerability persists across resets, Status.ChosenVulnerability gets cleared
+	//
+	// 3. Complete persistence (vulnerability: "K03", subIssue: 2):
+	//    - Always uses the exact same category AND sub-issue after each remediation
+	//    - Best for mastering one specific vulnerability through repetitive practice
+	//    - Both Spec.Vulnerability and Spec.SubIssue persist across resets
 	var chosenVuln string
 	if lab.Spec.Vulnerability != "" && lab.Spec.Vulnerability != "random" {
-		// Use specified vulnerability category
+		// Use specified vulnerability category (behavior 2 or 3 above)
 		chosenVuln = lab.Spec.Vulnerability
 		if lab.Spec.SubIssue != nil {
+			// Complete persistence - same category and same sub-issue every time
 			logger.Info("Using specified vulnerability category and sub-issue", "vulnerability", chosenVuln, "subIssue", *lab.Spec.SubIssue)
 		} else {
+			// Category persistence - same category, random sub-issue every time
 			logger.Info("Using specified vulnerability category with random sub-issue", "vulnerability", chosenVuln)
 		}
 	} else {
-		// Randomly choose a vulnerability type
+		// Complete randomization (behavior 1 above)
+		// Randomly choose both vulnerability category and sub-issue
 		vulnerabilities := []string{"K01", "K02", "K03", "K06", "K07", "K08"}
 		vulnIndex := r.selectRandomIndex(len(vulnerabilities))
 		chosenVuln = vulnerabilities[vulnIndex]
 		if lab.Spec.SubIssue != nil {
+			// This is an unusual case: random category but specified sub-issue
+			// The sub-issue will persist, but the category will change on each reset
 			logger.Info("Randomly selected vulnerability category with specified sub-issue", "vulnerability", chosenVuln, "subIssue", *lab.Spec.SubIssue)
 		} else {
+			// True complete randomization - both category and sub-issue change
 			logger.Info("Randomly selected vulnerability category and sub-issue", "vulnerability", chosenVuln)
 		}
 	}
@@ -252,6 +273,14 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 	r.cleanupClusterRBAC(ctx, namespace)
 
 	// Reset the status for a new round
+	// IMPORTANT: We only clear Status fields, NOT Spec fields
+	// This is what enables the persistence behavior:
+	//   - Spec.Vulnerability (user input) persists across resets
+	//   - Spec.SubIssue (user input) persists across resets  
+	//   - Status.ChosenVulnerability (runtime state) gets cleared
+	//   - Status.TargetResource (runtime state) gets cleared
+	// When initializeLab() runs again, it will check the persistent Spec fields
+	// to determine the appropriate randomization/persistence behavior
 	lab.Status.ChosenVulnerability = ""
 	lab.Status.TargetResource = ""
 	lab.Status.State = v1alpha1.StateInitialized

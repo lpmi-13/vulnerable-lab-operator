@@ -1,7 +1,7 @@
 apiVersion: lab.security.lab/v1alpha1
 kind: VulnerableLab
 metadata:
-  name: k08-hardcoded-annotation
+  name: vulnerablelab
 spec:
   vulnerability: K08
   subIssue: 1  # Hardcoded secrets annotation

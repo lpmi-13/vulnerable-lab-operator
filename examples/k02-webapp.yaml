@@ -1,7 +1,7 @@
 apiVersion: lab.security.lab/v1alpha1
 kind: VulnerableLab
 metadata:
-  name: k02-webapp
+  name: vulnerablelab
 spec:
   vulnerability: K02
   subIssue: 1  # Webapp vulnerable image (nginx:1.20-alpine)

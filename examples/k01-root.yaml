@@ -1,7 +1,7 @@
 apiVersion: lab.security.lab/v1alpha1
 kind: VulnerableLab
 metadata:
-  name: k01-root
+  name: vulnerablelab
 spec:
   vulnerability: K01
   subIssue: 1  # Running as root

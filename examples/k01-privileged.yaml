@@ -1,7 +1,7 @@
 apiVersion: lab.security.lab/v1alpha1
 kind: VulnerableLab
 metadata:
-  name: k01-privileged
+  name: vulnerablelab
 spec:
   vulnerability: K01
   subIssue: 0  # Privileged container

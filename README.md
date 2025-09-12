@@ -136,19 +136,32 @@ The custom playground will download the repo and build the operator. It will sta
 
 ## Getting Started
 
-Quick-start: if nothing is happening, run these commands, in order:
+Quick-start: if nothing is happening (or to reset things to a fresh state), run these commands, in order:
 - kubectl delete vulnerablelab test-lab
 - kubectl delete ns test-lab --ignore-not-found
 - make manifests (you probably don't need this unless you updated code in the operator)
 - make install
 - make run
-- and then you can create the CRD. If you pass in `vulnerability: "random"` or `spec: {}`, then it selects randomly from the list of categories. If you instead want to specify which vulnerability, you can pass that in directly via `vulnerability: K05`.
+- and then you can create the CRD. The operator supports different levels of randomization and persistence across remediation cycles.
 
 > examples of the final step are below, and it's the thing that actually creates the CRD...the reconciler won't do anything until that happens
 
+### Vulnerability Selection and Persistence Behavior
+
+The operator provides three different behaviors depending on how you specify the vulnerability:
+
+1. **Complete randomization**: New category AND new sub-issue after each remediation
+2. **Category persistence**: Same category, new random sub-issue after each remediation
+3. **Complete persistence**: Same category AND same sub-issue after each remediation
+
+This persistence behavior allows you to:
+- Practice identifying different vulnerability types (option 1)
+- Focus on a specific vulnerability category while exploring its variants (option 2)
+- Repeatedly practice the exact same vulnerability for mastery (option 3)
+
 ### Examples of creating a new CRD with varying levels of randomness
 
-complete random selection of sub-issue from within a random category:
+**Complete random selection** (new category + new sub-issue after each remediation cycle):
 
 ```sh
 kubectl apply -f - <<EOF
@@ -161,7 +174,7 @@ spec:
 EOF
 ```
 
-complete random selection of sub-issue from within a specific category:
+**Category persistence** (same category, random sub-issue after each remediation cycle):
 
 ```sh
 kubectl apply -f - <<EOF
@@ -174,7 +187,7 @@ spec:
 EOF
 ```
 
-specific selection of a sub-issue from within a specific category:
+**Complete persistence** (same category + same sub-issue after each remediation cycle):
 
 ```sh
 kubectl apply -f - <<EOF

@@ -1,7 +1,7 @@
 apiVersion: lab.security.lab/v1alpha1
 kind: VulnerableLab
 metadata:
-  name: k03-node-access
+  name: vulnerablelab
 spec:
   vulnerability: K03
   subIssue: 3  # Node Access

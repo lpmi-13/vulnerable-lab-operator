@@ -1,7 +1,7 @@
 apiVersion: lab.security.lab/v1alpha1
 kind: VulnerableLab
 metadata:
-  name: k07-db-exposure
+  name: vulnerablelab
 spec:
   vulnerability: K07
   subIssue: 2  # Database exposure (NodePort)

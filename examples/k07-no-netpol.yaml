@@ -1,7 +1,7 @@
 apiVersion: lab.security.lab/v1alpha1
 kind: VulnerableLab
 metadata:
-  name: k07-no-netpol
+  name: vulnerablelab
 spec:
   vulnerability: K07
   subIssue: 0  # Unrestricted pod-to-pod communication
