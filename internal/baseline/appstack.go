@@ -135,6 +135,16 @@ func GetAppStack(namespace string) []client.Object {
 										MountPath: "/var/run/postgresql",
 									},
 								},
+								// Readiness probe using TCP socket check for PostgreSQL port
+								ReadinessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										TCPSocket: &corev1.TCPSocketAction{
+											Port: intstr.FromString("postgres"),
+										},
+									},
+									InitialDelaySeconds: 10,
+									PeriodSeconds:       10,
+								},
 							},
 						},
 						Volumes: []corev1.Volume{
@@ -234,6 +244,16 @@ func GetAppStack(namespace string) []client.Object {
 										Name:      "redis-tmp",
 										MountPath: "/tmp",
 									},
+								},
+								// Readiness probe using TCP socket check for Redis port
+								ReadinessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										TCPSocket: &corev1.TCPSocketAction{
+											Port: intstr.FromString("redis"),
+										},
+									},
+									InitialDelaySeconds: 5,
+									PeriodSeconds:       10,
 								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
@@ -341,6 +361,17 @@ func GetAppStack(namespace string) []client.Object {
 										Name:      "prometheus-tmp",
 										MountPath: "/tmp",
 									},
+								},
+								// Readiness probe using HTTP check on Prometheus web interface
+								ReadinessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/-/ready",
+											Port: intstr.FromString("http"),
+										},
+									},
+									InitialDelaySeconds: 10,
+									PeriodSeconds:       10,
 								},
 							},
 						},
@@ -498,6 +529,17 @@ scrape_configs:
 										MountPath: "/tmp",
 									},
 								},
+								// Readiness probe using HTTP check on Grafana web interface
+								ReadinessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/api/health",
+											Port: intstr.FromString("http"),
+										},
+									},
+									InitialDelaySeconds: 15,
+									PeriodSeconds:       10,
+								},
 							},
 						},
 						Volumes: []corev1.Volume{
@@ -613,6 +655,17 @@ scrape_configs:
 										MountPath: "/tmp",
 									},
 								},
+								// Readiness probe using /bin/true since this container only runs "sleep infinity"
+								// and doesn't serve actual requests - this silences kube-score warnings
+								ReadinessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										Exec: &corev1.ExecAction{
+											Command: []string{"/bin/true"},
+										},
+									},
+									InitialDelaySeconds: 5,
+									PeriodSeconds:       10,
+								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory:           resource.MustParse("64Mi"),
@@ -725,6 +778,17 @@ scrape_configs:
 										MountPath: "/tmp",
 									},
 								},
+								// Readiness probe using /bin/true since this container only runs "sleep infinity"
+								// and doesn't serve actual requests - this silences kube-score warnings
+								ReadinessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										Exec: &corev1.ExecAction{
+											Command: []string{"/bin/true"},
+										},
+									},
+									InitialDelaySeconds: 5,
+									PeriodSeconds:       10,
+								},
 							},
 						},
 						Volumes: []corev1.Volume{
@@ -827,6 +891,17 @@ scrape_configs:
 										Name:      "payment-tmp",
 										MountPath: "/tmp",
 									},
+								},
+								// Readiness probe using /bin/true since this container only runs "sleep infinity"
+								// and doesn't serve actual requests - this silences kube-score warnings
+								ReadinessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										Exec: &corev1.ExecAction{
+											Command: []string{"/bin/true"},
+										},
+									},
+									InitialDelaySeconds: 5,
+									PeriodSeconds:       10,
 								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
@@ -1032,6 +1107,16 @@ http {
 									},
 								},
 								Command: []string{"nginx", "-g", "daemon off;"},
+								// Readiness probe using TCP socket check for nginx HTTP port
+								ReadinessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										TCPSocket: &corev1.TCPSocketAction{
+											Port: intstr.FromString("http"),
+										},
+									},
+									InitialDelaySeconds: 5,
+									PeriodSeconds:       10,
+								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory:           resource.MustParse("32Mi"),
