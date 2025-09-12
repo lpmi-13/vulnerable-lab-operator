@@ -130,6 +130,10 @@ func GetAppStack(namespace string) []client.Object {
 										Name:      "postgres-var-tmp",
 										MountPath: "/var/tmp",
 									},
+									{
+										Name:      "postgres-run",
+										MountPath: "/var/run/postgresql",
+									},
 								},
 							},
 						},
@@ -148,6 +152,12 @@ func GetAppStack(namespace string) []client.Object {
 							},
 							{
 								Name: "postgres-var-tmp",
+								VolumeSource: corev1.VolumeSource{
+									EmptyDir: &corev1.EmptyDirVolumeSource{},
+								},
+							},
+							{
+								Name: "postgres-run",
 								VolumeSource: corev1.VolumeSource{
 									EmptyDir: &corev1.EmptyDirVolumeSource{},
 								},
