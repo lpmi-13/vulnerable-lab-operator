@@ -140,9 +140,13 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 
 			switch vulnType {
 			case 0: // Privileged container
-				container.SecurityContext = &corev1.SecurityContext{
-					Privileged: ptr.To(true),
+				// Preserve existing security context but add privileged vulnerability
+				if container.SecurityContext == nil {
+					container.SecurityContext = &corev1.SecurityContext{}
 				}
+				container.SecurityContext.Privileged = ptr.To(true)
+				// When privileged=true, allowPrivilegeEscalation must be nil or true (cannot be false)
+				container.SecurityContext.AllowPrivilegeEscalation = nil
 				// Add annotation indicating why this is privileged (looks realistic)
 				if dep.Spec.Template.Annotations == nil {
 					dep.Spec.Template.Annotations = make(map[string]string)
@@ -150,9 +154,12 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 				dep.Spec.Template.Annotations["container.security.privileged"] = "host-access-required"
 
 			case 1: // Running as root
-				container.SecurityContext = &corev1.SecurityContext{
-					RunAsUser: ptr.To(int64(0)),
+				// Preserve existing security context but modify user to run as root
+				if container.SecurityContext == nil {
+					container.SecurityContext = &corev1.SecurityContext{}
 				}
+				container.SecurityContext.RunAsUser = ptr.To(int64(0))
+				container.SecurityContext.RunAsNonRoot = ptr.To(false) // Override the baseline runAsNonRoot
 				// Add annotation that looks like a legitimate override
 				if dep.Spec.Template.Annotations == nil {
 					dep.Spec.Template.Annotations = make(map[string]string)
@@ -160,13 +167,16 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 				dep.Spec.Template.Annotations["container.security.runAsRoot"] = "legacy-compatibility"
 
 			case 2: // Dangerous capabilities
-				container.SecurityContext = &corev1.SecurityContext{
-					Capabilities: &corev1.Capabilities{
-						Add: []corev1.Capability{
-							"SYS_ADMIN",
-							"NET_ADMIN",
-						},
-					},
+				// Preserve existing security context but add dangerous capabilities
+				if container.SecurityContext == nil {
+					container.SecurityContext = &corev1.SecurityContext{}
+				}
+				if container.SecurityContext.Capabilities == nil {
+					container.SecurityContext.Capabilities = &corev1.Capabilities{}
+				}
+				container.SecurityContext.Capabilities.Add = []corev1.Capability{
+					"SYS_ADMIN",
+					"NET_ADMIN",
 				}
 				// Add annotation that looks like a network requirement
 				if dep.Spec.Template.Annotations == nil {
