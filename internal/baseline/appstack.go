@@ -47,7 +47,8 @@ func GetAppStack(namespace string) []client.Object {
 						Labels: map[string]string{"app": "postgres-db", "app.kubernetes.io/component": "database"},
 					},
 					Spec: corev1.PodSpec{
-						ServiceAccountName: "restricted-sa",
+						ServiceAccountName:           "restricted-sa",
+						AutomountServiceAccountToken: ptr.To(false),
 						Containers: []corev1.Container{
 							{
 								Name:            "postgres",
@@ -226,7 +227,8 @@ func GetAppStack(namespace string) []client.Object {
 						Labels: map[string]string{"app": "redis-cache", "app.kubernetes.io/component": "cache"},
 					},
 					Spec: corev1.PodSpec{
-						ServiceAccountName: "restricted-sa",
+						ServiceAccountName:           "restricted-sa",
+						AutomountServiceAccountToken: ptr.To(false),
 						Containers: []corev1.Container{
 							{
 								Name:            "redis",
@@ -316,7 +318,8 @@ func GetAppStack(namespace string) []client.Object {
 						Labels: map[string]string{"app": "prometheus", "app.kubernetes.io/component": "monitoring"},
 					},
 					Spec: corev1.PodSpec{
-						ServiceAccountName: "restricted-sa",
+						ServiceAccountName:           "restricted-sa",
+						AutomountServiceAccountToken: ptr.To(false),
 						Containers: []corev1.Container{
 							{
 								Name:            "prometheus",
@@ -466,7 +469,8 @@ scrape_configs:
 						Labels: map[string]string{"app": "grafana", "app.kubernetes.io/component": "monitoring"},
 					},
 					Spec: corev1.PodSpec{
-						ServiceAccountName: "restricted-sa",
+						ServiceAccountName:           "restricted-sa",
+						AutomountServiceAccountToken: ptr.To(false),
 						Containers: []corev1.Container{
 							{
 								Name:            "grafana",
@@ -595,7 +599,8 @@ scrape_configs:
 						Labels: map[string]string{"app": "api", "app.kubernetes.io/component": "backend"},
 					},
 					Spec: corev1.PodSpec{
-						ServiceAccountName: "restricted-sa",
+						ServiceAccountName:           "restricted-sa",
+						AutomountServiceAccountToken: ptr.To(false),
 						Containers: []corev1.Container{
 							{
 								Name:            "api-server",
@@ -727,7 +732,8 @@ scrape_configs:
 						Labels: map[string]string{"app": "user-service", "app.kubernetes.io/component": "backend"},
 					},
 					Spec: corev1.PodSpec{
-						ServiceAccountName: "restricted-sa",
+						ServiceAccountName:           "restricted-sa",
+						AutomountServiceAccountToken: ptr.To(false),
 						Containers: []corev1.Container{
 							{
 								Name:            "user-api",
@@ -847,7 +853,8 @@ scrape_configs:
 						Labels: map[string]string{"app": "payment-service", "app.kubernetes.io/component": "backend"},
 					},
 					Spec: corev1.PodSpec{
-						ServiceAccountName: "restricted-sa",
+						ServiceAccountName:           "restricted-sa",
+						AutomountServiceAccountToken: ptr.To(false),
 						Containers: []corev1.Container{
 							{
 								Name:            "payment-processor",
@@ -1076,7 +1083,8 @@ http {
 						Labels: map[string]string{"app": "webapp", "app.kubernetes.io/component": "frontend"},
 					},
 					Spec: corev1.PodSpec{
-						ServiceAccountName: "restricted-sa",
+						ServiceAccountName:           "restricted-sa",
+						AutomountServiceAccountToken: ptr.To(false),
 						Containers: []corev1.Container{
 							{
 								Name:            "web-ui",
@@ -1726,6 +1734,7 @@ http {
 				Name:      "restricted-sa",
 				Namespace: namespace,
 			},
+			AutomountServiceAccountToken: ptr.To(false),
 		},
 	}
 }
