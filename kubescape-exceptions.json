@@ -1,0 +1,17 @@
+[
+    {
+        "name": "exclude-deployments-in-ns-default",
+        "policyType": "postureExceptionPolicy",
+        "resources": [
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "test-lab",
+                    "name": "default",
+                    "kind": "ServiceAccount"
+                }
+            }
+        ],
+        "posturePolicies": [{ "controlID": "C-0034" }]
+    }
+]
