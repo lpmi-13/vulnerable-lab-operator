@@ -150,6 +150,16 @@ func GetAppStack(namespace string) []client.Object {
 									InitialDelaySeconds: 10,
 									PeriodSeconds:       10,
 								},
+								// Liveness probe using pg_isready command
+								LivenessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										Exec: &corev1.ExecAction{
+											Command: []string{"pg_isready", "-U", "postgres"},
+										},
+									},
+									InitialDelaySeconds: 30,
+									PeriodSeconds:       30,
+								},
 							},
 						},
 						Volumes: []corev1.Volume{
@@ -260,6 +270,16 @@ func GetAppStack(namespace string) []client.Object {
 									},
 									InitialDelaySeconds: 5,
 									PeriodSeconds:       10,
+								},
+								// Liveness probe using redis-cli ping command
+								LivenessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										Exec: &corev1.ExecAction{
+											Command: []string{"redis-cli", "ping"},
+										},
+									},
+									InitialDelaySeconds: 15,
+									PeriodSeconds:       30,
 								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
@@ -379,6 +399,17 @@ func GetAppStack(namespace string) []client.Object {
 									},
 									InitialDelaySeconds: 10,
 									PeriodSeconds:       10,
+								},
+								// Liveness probe using HTTP check on Prometheus metrics endpoint
+								LivenessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/metrics",
+											Port: intstr.FromString("http"),
+										},
+									},
+									InitialDelaySeconds: 30,
+									PeriodSeconds:       30,
 								},
 							},
 						},
@@ -548,6 +579,17 @@ scrape_configs:
 									InitialDelaySeconds: 15,
 									PeriodSeconds:       10,
 								},
+								// Liveness probe using HTTP check on Grafana metrics endpoint
+								LivenessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/metrics",
+											Port: intstr.FromString("http"),
+										},
+									},
+									InitialDelaySeconds: 45,
+									PeriodSeconds:       30,
+								},
 							},
 						},
 						Volumes: []corev1.Volume{
@@ -675,6 +717,16 @@ scrape_configs:
 									InitialDelaySeconds: 5,
 									PeriodSeconds:       10,
 								},
+								// Liveness probe checking if sleep process is running
+								LivenessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										Exec: &corev1.ExecAction{
+											Command: []string{"pgrep", "sleep"},
+										},
+									},
+									InitialDelaySeconds: 15,
+									PeriodSeconds:       30,
+								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceMemory:           resource.MustParse("64Mi"),
@@ -799,6 +851,16 @@ scrape_configs:
 									InitialDelaySeconds: 5,
 									PeriodSeconds:       10,
 								},
+								// Liveness probe checking if sleep process is running
+								LivenessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										Exec: &corev1.ExecAction{
+											Command: []string{"pgrep", "sleep"},
+										},
+									},
+									InitialDelaySeconds: 15,
+									PeriodSeconds:       30,
+								},
 							},
 						},
 						Volumes: []corev1.Volume{
@@ -913,6 +975,16 @@ scrape_configs:
 									},
 									InitialDelaySeconds: 5,
 									PeriodSeconds:       10,
+								},
+								// Liveness probe checking if sleep process is running
+								LivenessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										Exec: &corev1.ExecAction{
+											Command: []string{"pgrep", "sleep"},
+										},
+									},
+									InitialDelaySeconds: 15,
+									PeriodSeconds:       30,
 								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
@@ -1128,6 +1200,16 @@ http {
 									},
 									InitialDelaySeconds: 5,
 									PeriodSeconds:       10,
+								},
+								// Liveness probe using nginx status check
+								LivenessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										Exec: &corev1.ExecAction{
+											Command: []string{"nginx", "-t"},
+										},
+									},
+									InitialDelaySeconds: 15,
+									PeriodSeconds:       30,
 								},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
