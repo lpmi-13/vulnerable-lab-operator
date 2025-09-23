@@ -39,7 +39,7 @@ func GetAppStack(namespace string) []client.Object {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "postgres-db",
 				Namespace: namespace,
-				Labels:    map[string]string{"app.kubernetes.io/component": "database"},
+				Labels:    map[string]string{"app": "postgres-db", "app.kubernetes.io/component": "database"},
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
@@ -229,7 +229,7 @@ func GetAppStack(namespace string) []client.Object {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "redis-cache",
 				Namespace: namespace,
-				Labels:    map[string]string{"app.kubernetes.io/component": "cache"},
+				Labels:    map[string]string{"app": "redis-cache", "app.kubernetes.io/component": "cache"},
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
@@ -330,7 +330,7 @@ func GetAppStack(namespace string) []client.Object {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "prometheus",
 				Namespace: namespace,
-				Labels:    map[string]string{"app.kubernetes.io/component": "monitoring"},
+				Labels:    map[string]string{"app": "prometheus", "app.kubernetes.io/component": "monitoring"},
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
@@ -492,7 +492,7 @@ scrape_configs:
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "grafana",
 				Namespace: namespace,
-				Labels:    map[string]string{"app.kubernetes.io/component": "monitoring"},
+				Labels:    map[string]string{"app": "grafana", "app.kubernetes.io/component": "monitoring"},
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
@@ -633,7 +633,7 @@ scrape_configs:
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "api",
 				Namespace: namespace,
-				Labels:    map[string]string{"app.kubernetes.io/component": "backend"},
+				Labels:    map[string]string{"app": "api", "app.kubernetes.io/component": "backend"},
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
@@ -776,7 +776,7 @@ scrape_configs:
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "user-service",
 				Namespace: namespace,
-				Labels:    map[string]string{"app.kubernetes.io/component": "backend", "app.kubernetes.io/microservice": "user"},
+				Labels:    map[string]string{"app": "user-service", "app.kubernetes.io/component": "backend", "app.kubernetes.io/microservice": "user"},
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
@@ -907,7 +907,7 @@ scrape_configs:
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "payment-service",
 				Namespace: namespace,
-				Labels:    map[string]string{"app.kubernetes.io/component": "backend", "app.kubernetes.io/microservice": "payment"},
+				Labels:    map[string]string{"app": "payment-service", "app.kubernetes.io/component": "backend", "app.kubernetes.io/microservice": "payment"},
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
@@ -1147,7 +1147,7 @@ http {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "webapp",
 				Namespace: namespace,
-				Labels:    map[string]string{"app.kubernetes.io/component": "frontend"},
+				Labels:    map[string]string{"app": "webapp", "app.kubernetes.io/component": "frontend"},
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
