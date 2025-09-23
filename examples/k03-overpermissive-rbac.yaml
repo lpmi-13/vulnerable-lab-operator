@@ -4,4 +4,4 @@ metadata:
   name: test-lab
 spec:
   vulnerability: K03
-  subIssue: 2  # Cross-Namespace Access
+  subIssue: 0  # Overpermissive RBAC permissions

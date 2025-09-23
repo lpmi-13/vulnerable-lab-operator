@@ -253,34 +253,27 @@ func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 			// Choose vulnerability type based on subIssue parameter or randomly
 			var vulnType int
 			if subIssue != nil {
-				if *subIssue < 0 || *subIssue > 3 {
-					return fmt.Errorf("subIssue %d out of range for K03 (valid: 0-3)", *subIssue)
+				if *subIssue < 0 || *subIssue > 2 {
+					return fmt.Errorf("subIssue %d out of range for K03 (valid: 0-2)", *subIssue)
 				}
 				vulnType = *subIssue
 			} else {
-				// Randomly choose one of four K03 vulnerability types
+				// Randomly choose one of three K03 vulnerability types (all namespace-scoped)
 				localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
-				vulnType = localRand.Intn(4)
+				vulnType = localRand.Intn(3)
 			}
 
 			switch vulnType {
-			case 0: // Cluster Admin Access
-				if err := createClusterAdminRBAC(appStack, namespace); err != nil {
+			case 0: // Namespace Overpermissive Access (namespace-scoped)
+				if err := createNamespaceOverpermissiveRBAC(appStack, namespace); err != nil {
 					return err
 				}
-
-			case 1: // Secret Access
-				if err := createSecretAccessRBAC(appStack, namespace); err != nil {
+			case 1: // Default Service Account Permissions (namespace-scoped)
+				if err := createDefaultServiceAccountRBAC(appStack, namespace); err != nil {
 					return err
 				}
-
-			case 2: // Cross-Namespace Access
-				if err := createCrossNamespaceRBAC(appStack, namespace); err != nil {
-					return err
-				}
-
-			case 3: // Node Access
-				if err := createNodeAccessRBAC(appStack, namespace); err != nil {
+			case 2: // Excessive Secrets Access (namespace-scoped)
+				if err := createExcessiveSecretsRBAC(appStack, namespace); err != nil {
 					return err
 				}
 			}
@@ -292,14 +285,39 @@ func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 	return fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
 }
 
-// createClusterAdminRBAC grants cluster-admin permissions to the service account
-func createClusterAdminRBAC(appStack *[]client.Object, namespace string) error {
-	binding := &rbacv1.ClusterRoleBinding{
+// createNamespaceOverpermissiveRBAC grants overly broad permissions within the namespace only
+func createNamespaceOverpermissiveRBAC(appStack *[]client.Object, namespace string) error {
+	role := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("%s-cluster-access", namespace),
+			Name:      fmt.Sprintf("%s-overpermissive", namespace),
+			Namespace: namespace,
 			Annotations: map[string]string{
-				"rbac.authorization.k8s.io/reason": "service-mesh-integration",
+				"rbac.authorization.k8s.io/reason": "development-testing",
 			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"secrets"},
+				Verbs:     []string{"list", "watch", "get"}, // Too broad - can see all secrets
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"configmaps"},
+				Verbs:     []string{"list", "watch", "get", "create", "update"}, // Excessive permissions
+			},
+			{
+				APIGroups: []string{"apps"},
+				Resources: []string{"deployments"},
+				Verbs:     []string{"list", "watch", "get", "patch"}, // Can modify deployments
+			},
+		},
+	}
+
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-overpermissive-binding", namespace),
+			Namespace: namespace,
 		},
 		Subjects: []rbacv1.Subject{
 			{
@@ -309,17 +327,17 @@ func createClusterAdminRBAC(appStack *[]client.Object, namespace string) error {
 			},
 		},
 		RoleRef: rbacv1.RoleRef{
-			Kind:     "ClusterRole",
-			Name:     "cluster-admin",
+			Kind:     "Role",
+			Name:     role.Name,
 			APIGroup: "rbac.authorization.k8s.io",
 		},
 	}
 
-	// Add the RBAC resource to the stack
+	// Add the RBAC resources to the stack
 	for i, obj := range *appStack {
 		if _, ok := obj.(*corev1.ServiceAccount); ok {
-			// Insert binding right after service account
-			*appStack = append((*appStack)[:i+1], append([]client.Object{binding}, (*appStack)[i+1:]...)...)
+			// Insert role and binding right after service account
+			*appStack = append((*appStack)[:i+1], append([]client.Object{role, binding}, (*appStack)[i+1:]...)...)
 			break
 		}
 	}
@@ -456,6 +474,116 @@ func createNodeAccessRBAC(appStack *[]client.Object, namespace string) error {
 		},
 		RoleRef: rbacv1.RoleRef{
 			Kind:     "ClusterRole",
+			Name:     role.Name,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	// Add the RBAC resources to the stack
+	for i, obj := range *appStack {
+		if _, ok := obj.(*corev1.ServiceAccount); ok {
+			// Insert role and binding right after service account
+			*appStack = append((*appStack)[:i+1], append([]client.Object{role, binding}, (*appStack)[i+1:]...)...)
+			break
+		}
+	}
+
+	return nil
+}
+
+// createDefaultServiceAccountRBAC grants permissions to the default service account
+func createDefaultServiceAccountRBAC(appStack *[]client.Object, namespace string) error {
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-default-permissions", namespace),
+			Namespace: namespace,
+			Annotations: map[string]string{
+				"rbac.authorization.k8s.io/reason": "legacy-compatibility",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods", "services"},
+				Verbs:     []string{"get", "list", "watch", "create"}, // Default SA should not have create permissions
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"configmaps"},
+				Verbs:     []string{"get", "list", "watch"}, // Can read all configmaps
+			},
+		},
+	}
+
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-default-binding", namespace),
+			Namespace: namespace,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "default", // Dangerous - granting permissions to default SA
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "Role",
+			Name:     role.Name,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	// Add the RBAC resources to the stack
+	for i, obj := range *appStack {
+		if _, ok := obj.(*corev1.ServiceAccount); ok {
+			// Insert role and binding right after service account
+			*appStack = append((*appStack)[:i+1], append([]client.Object{role, binding}, (*appStack)[i+1:]...)...)
+			break
+		}
+	}
+
+	return nil
+}
+
+// createExcessiveSecretsRBAC grants overly broad access to secrets within the namespace
+func createExcessiveSecretsRBAC(appStack *[]client.Object, namespace string) error {
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-secrets-reader", namespace),
+			Namespace: namespace,
+			Annotations: map[string]string{
+				"rbac.authorization.k8s.io/reason": "debug-troubleshooting",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"secrets"},
+				Verbs:     []string{"get", "list", "watch"}, // Can read ALL secrets in namespace
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods"},
+				Verbs:     []string{"get", "list", "watch", "delete"}, // Unnecessary delete permission
+			},
+		},
+	}
+
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-secrets-binding", namespace),
+			Namespace: namespace,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "restricted-sa",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "Role",
 			Name:     role.Name,
 			APIGroup: "rbac.authorization.k8s.io",
 		},
