@@ -13,5 +13,20 @@
             }
         ],
         "posturePolicies": [{ "controlID": "C-0034" }]
+    },
+    {
+        "name": "exclude-restricted-sa-access-control",
+        "policyType": "postureExceptionPolicy",
+        "resources": [
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "test-lab",
+                    "name": "restricted-sa",
+                    "kind": "ServiceAccount"
+                }
+            }
+        ],
+        "posturePolicies": [{ "controlID": "C-0053" }]
     }
 ]
