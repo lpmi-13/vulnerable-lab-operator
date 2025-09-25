@@ -15,15 +15,30 @@
         "posturePolicies": [{ "controlID": "C-0034" }]
     },
     {
-        "name": "exclude-restricted-sa-access-control",
+        "name": "exclude-baseline-restricted-role",
         "policyType": "postureExceptionPolicy",
         "resources": [
             {
                 "designatorType": "Attributes",
                 "attributes": {
                     "namespace": "test-lab",
-                    "name": "restricted-sa",
-                    "kind": "ServiceAccount"
+                    "name": "restricted-role",
+                    "kind": "Role"
+                }
+            }
+        ],
+        "posturePolicies": [{ "controlID": "C-0053" }]
+    },
+    {
+        "name": "exclude-baseline-restricted-binding",
+        "policyType": "postureExceptionPolicy",
+        "resources": [
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "test-lab",
+                    "name": "restricted-binding",
+                    "kind": "RoleBinding"
                 }
             }
         ],
