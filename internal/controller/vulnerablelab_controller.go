@@ -195,6 +195,11 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 	logger := log.FromContext(ctx)
 	logger.Info("Checking if vulnerability has been remediated", "vulnerability", lab.Status.ChosenVulnerability, "target", lab.Status.TargetResource)
 
+	// For K03 vulnerabilities, check for partial deletions and clean up
+	if lab.Status.ChosenVulnerability == "K03" {
+		r.cleanupOrphanedK03Resources(ctx, namespace)
+	}
+
 	isFixed, err := breaker.CheckRemediation(ctx, r.Client, lab.Status.ChosenVulnerability, lab.Status.TargetResource, namespace)
 	if err != nil {
 		logger.Error(err, "Failed to check remediation status")
@@ -316,66 +321,56 @@ func (r *VulnerableLabReconciler) writeClusterStatus(status string) {
 	}
 }
 
-// cleanupClusterRBAC removes any cluster-scoped RBAC resources created by K03 vulnerabilities
-func (r *VulnerableLabReconciler) cleanupClusterRBAC(ctx context.Context, namespace string) {
+// cleanupOrphanedK03Resources removes orphaned RBAC resources when partial deletions occur
+func (r *VulnerableLabReconciler) cleanupOrphanedK03Resources(ctx context.Context, namespace string) {
 	logger := log.FromContext(ctx)
 
-	// Clean up ClusterRoles with namespace-specific names
-	clusterRoleNames := []string{
-		fmt.Sprintf("%s-secret-reader", namespace),
-		fmt.Sprintf("%s-node-reader", namespace),
+	// Define all possible K03 RBAC resource pairs
+	rbacPairs := []struct {
+		roleName        string
+		roleBindingName string
+	}{
+		{"test-lab-overpermissive", "test-lab-overpermissive-binding"},
+		{"test-lab-default-permissions", "test-lab-default-binding"},
+		{"test-lab-secrets-reader", "test-lab-secrets-binding"},
 	}
 
-	for _, roleName := range clusterRoleNames {
-		clusterRole := &rbacv1.ClusterRole{}
-		if err := r.Get(ctx, client.ObjectKey{Name: roleName}, clusterRole); err == nil {
-			if err := r.Delete(ctx, clusterRole); err != nil && !errors.IsNotFound(err) {
-				logger.Error(err, "Failed to delete ClusterRole", "name", roleName)
-			} else {
-				logger.Info("Deleted ClusterRole", "name", roleName)
+	for _, pair := range rbacPairs {
+		// Check if RoleBinding exists
+		roleBinding := &rbacv1.RoleBinding{}
+		bindingExists := true
+		if err := r.Get(ctx, client.ObjectKey{Name: pair.roleBindingName, Namespace: namespace}, roleBinding); err != nil {
+			if errors.IsNotFound(err) {
+				bindingExists = false
 			}
 		}
-	}
 
-	// Clean up ClusterRoleBindings with namespace-specific names
-	clusterRoleBindingNames := []string{
-		fmt.Sprintf("%s-cluster-access", namespace),
-		fmt.Sprintf("%s-secret-access", namespace),
-		fmt.Sprintf("%s-node-access", namespace),
-	}
-
-	for _, bindingName := range clusterRoleBindingNames {
-		clusterRoleBinding := &rbacv1.ClusterRoleBinding{}
-		if err := r.Get(ctx, client.ObjectKey{Name: bindingName}, clusterRoleBinding); err == nil {
-			if err := r.Delete(ctx, clusterRoleBinding); err != nil && !errors.IsNotFound(err) {
-				logger.Error(err, "Failed to delete ClusterRoleBinding", "name", bindingName)
-			} else {
-				logger.Info("Deleted ClusterRoleBinding", "name", bindingName)
+		// Check if Role exists
+		role := &rbacv1.Role{}
+		roleExists := true
+		if err := r.Get(ctx, client.ObjectKey{Name: pair.roleName, Namespace: namespace}, role); err != nil {
+			if errors.IsNotFound(err) {
+				roleExists = false
 			}
 		}
-	}
 
-	// Clean up cross-namespace RBAC resources in kube-system (from K03:2)
-	kubeSystemRoleName := fmt.Sprintf("%s-system-access", namespace)
-	kubeSystemRole := &rbacv1.Role{}
-	if err := r.Get(ctx, client.ObjectKey{Name: kubeSystemRoleName, Namespace: "kube-system"}, kubeSystemRole); err == nil {
-		if err := r.Delete(ctx, kubeSystemRole); err != nil && !errors.IsNotFound(err) {
-			logger.Error(err, "Failed to delete kube-system Role", "name", kubeSystemRoleName)
-		} else {
-			logger.Info("Deleted kube-system Role", "name", kubeSystemRoleName)
+		// If RoleBinding was deleted but Role still exists, clean up the Role
+		if !bindingExists && roleExists {
+			logger.Info("Cleaning up orphaned Role", "role", pair.roleName)
+			if err := r.Delete(ctx, role); err != nil && !errors.IsNotFound(err) {
+				logger.Error(err, "Failed to delete orphaned Role", "role", pair.roleName)
+			}
 		}
-	}
 
-	kubeSystemBindingName := fmt.Sprintf("%s-system-binding", namespace)
-	kubeSystemBinding := &rbacv1.RoleBinding{}
-	if err := r.Get(ctx, client.ObjectKey{Name: kubeSystemBindingName, Namespace: "kube-system"}, kubeSystemBinding); err == nil {
-		if err := r.Delete(ctx, kubeSystemBinding); err != nil && !errors.IsNotFound(err) {
-			logger.Error(err, "Failed to delete kube-system RoleBinding", "name", kubeSystemBindingName)
-		} else {
-			logger.Info("Deleted kube-system RoleBinding", "name", kubeSystemBindingName)
-		}
 	}
+}
 
+// cleanupClusterRBAC removes any cluster-scoped RBAC resources
+// Note: K03 vulnerabilities are now entirely namespace-scoped and cleaned up automatically
+// when the namespace is deleted. This function is kept for potential future cluster-scoped vulnerabilities.
+func (r *VulnerableLabReconciler) cleanupClusterRBAC(ctx context.Context, namespace string) {
+	// Currently no cluster-scoped resources to clean up
+	// K03 now uses only namespace-scoped Roles and RoleBindings
 }
 
 // SetupWithManager sets up the controller with the Manager.

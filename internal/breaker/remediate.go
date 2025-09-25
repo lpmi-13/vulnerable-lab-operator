@@ -142,32 +142,28 @@ func checkK02(ctx context.Context, c client.Client, targetDeployment, namespace 
 func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace string) (bool, error) {
 	logger := log.FromContext(ctx)
 
-	// Since K03 applies only ONE of four possible RBAC vulnerabilities, we check for any existing
-	// overpermissive RBAC resources that may have been created for this namespace
+	// Since K03 applies only ONE of three possible RBAC vulnerabilities (all namespace-scoped),
+	// we check for any existing overpermissive RBAC resources that may have been created for this namespace
 	overpermissiveResources := []struct {
-		resource client.Object
-		name     string
-		reason   string
+		resource  client.Object
+		name      string
+		namespace string
+		reason    string
 	}{
-		{&rbacv1.ClusterRoleBinding{}, fmt.Sprintf("%s-cluster-access", namespace), "cluster-admin binding"},
-		{&rbacv1.ClusterRoleBinding{}, fmt.Sprintf("%s-secret-access", namespace), "secret access binding"},
-		{&rbacv1.RoleBinding{}, fmt.Sprintf("%s-system-binding", namespace), "cross-namespace binding"},
-		{&rbacv1.ClusterRoleBinding{}, fmt.Sprintf("%s-node-access", namespace), "node access binding"},
-		{&rbacv1.ClusterRole{}, fmt.Sprintf("%s-secret-reader", namespace), "secret reader role"},
-		{&rbacv1.Role{}, fmt.Sprintf("%s-system-access", namespace), "system access role"},
-		{&rbacv1.ClusterRole{}, fmt.Sprintf("%s-node-reader", namespace), "node reader role"},
+		// Namespace Overpermissive Access (subIssue 0)
+		{&rbacv1.Role{}, fmt.Sprintf("%s-overpermissive", namespace), namespace, "overpermissive role"},
+		{&rbacv1.RoleBinding{}, fmt.Sprintf("%s-overpermissive-binding", namespace), namespace, "overpermissive binding"},
+		// Default Service Account Permissions (subIssue 1)
+		{&rbacv1.Role{}, fmt.Sprintf("%s-default-permissions", namespace), namespace, "default SA permissions role"},
+		{&rbacv1.RoleBinding{}, fmt.Sprintf("%s-default-binding", namespace), namespace, "default SA binding"},
+		// Excessive Secrets Access (subIssue 2)
+		{&rbacv1.Role{}, fmt.Sprintf("%s-secrets-reader", namespace), namespace, "secrets reader role"},
+		{&rbacv1.RoleBinding{}, fmt.Sprintf("%s-secrets-binding", namespace), namespace, "secrets binding"},
 	}
 
 	vulnerabilityFound := false
 	for _, res := range overpermissiveResources {
-		key := client.ObjectKey{Name: res.name}
-		// For RoleBinding in kube-system, set the namespace
-		if res.name == fmt.Sprintf("%s-system-binding", namespace) {
-			key.Namespace = "kube-system"
-		}
-		if res.name == fmt.Sprintf("%s-system-access", namespace) {
-			key.Namespace = "kube-system"
-		}
+		key := client.ObjectKey{Name: res.name, Namespace: res.namespace}
 
 		err := c.Get(ctx, key, res.resource)
 		if err == nil {

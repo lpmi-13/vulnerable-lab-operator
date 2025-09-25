@@ -291,6 +291,9 @@ func createNamespaceOverpermissiveRBAC(appStack *[]client.Object, namespace stri
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-overpermissive", namespace),
 			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
 			Annotations: map[string]string{
 				"rbac.authorization.k8s.io/reason": "development-testing",
 			},
@@ -318,6 +321,9 @@ func createNamespaceOverpermissiveRBAC(appStack *[]client.Object, namespace stri
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-overpermissive-binding", namespace),
 			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
 		},
 		Subjects: []rbacv1.Subject{
 			{
@@ -345,12 +351,16 @@ func createNamespaceOverpermissiveRBAC(appStack *[]client.Object, namespace stri
 	return nil
 }
 
-// createDefaultServiceAccountRBAC grants permissions to the default service account
+// createDefaultServiceAccountRBAC grants excessive permissions to the service account
 func createDefaultServiceAccountRBAC(appStack *[]client.Object, namespace string) error {
 	role := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-default-permissions", namespace),
 			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+				"rbac.k8s.lab/binding":    fmt.Sprintf("%s-default-binding", namespace),
+			},
 			Annotations: map[string]string{
 				"rbac.authorization.k8s.io/reason": "legacy-compatibility",
 			},
@@ -359,7 +369,7 @@ func createDefaultServiceAccountRBAC(appStack *[]client.Object, namespace string
 			{
 				APIGroups: []string{""},
 				Resources: []string{"pods", "services"},
-				Verbs:     []string{"get", "list", "watch", "create"}, // Default SA should not have create permissions
+				Verbs:     []string{"get", "list", "watch", "create"}, // Should not have create permissions
 			},
 			{
 				APIGroups: []string{""},
@@ -373,11 +383,14 @@ func createDefaultServiceAccountRBAC(appStack *[]client.Object, namespace string
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-default-binding", namespace),
 			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
 		},
 		Subjects: []rbacv1.Subject{
 			{
 				Kind:      "ServiceAccount",
-				Name:      "default", // Dangerous - granting permissions to default SA
+				Name:      "restricted-sa",
 				Namespace: namespace,
 			},
 		},
@@ -388,7 +401,7 @@ func createDefaultServiceAccountRBAC(appStack *[]client.Object, namespace string
 		},
 	}
 
-	// Add the RBAC resources to the stack
+	// Add the RBAC resources to the stack (Role first, then RoleBinding)
 	for i, obj := range *appStack {
 		if _, ok := obj.(*corev1.ServiceAccount); ok {
 			// Insert role and binding right after service account
@@ -406,6 +419,9 @@ func createExcessiveSecretsRBAC(appStack *[]client.Object, namespace string) err
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-secrets-reader", namespace),
 			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
 			Annotations: map[string]string{
 				"rbac.authorization.k8s.io/reason": "debug-troubleshooting",
 			},
@@ -428,6 +444,9 @@ func createExcessiveSecretsRBAC(appStack *[]client.Object, namespace string) err
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-secrets-binding", namespace),
 			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
 		},
 		Subjects: []rbacv1.Subject{
 			{
