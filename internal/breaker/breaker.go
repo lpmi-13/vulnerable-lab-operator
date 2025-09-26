@@ -194,15 +194,15 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 
 // applyK02ToStack modifies the baseline stack to apply supply chain vulnerabilities
 func applyK02ToStack(appStack []client.Object, targetDeployment string, subIssue *int) error {
-	// Define vulnerable images that are realistic but outdated
+	// Define vulnerable images with critical CVEs for realistic security testing
 	vulnerableImages := []struct {
 		deployment string
 		image      string
 	}{
-		{"api", "node:16-alpine"},              // 0: vs current node:22-alpine
-		{"webapp", "nginx:1.20-alpine"},        // 1: vs current nginx:1.29.1-alpine
-		{"user-service", "python:3.9-alpine"},  // 2: vs current python:3.13-alpine
-		{"payment-service", "ruby:3.0-alpine"}, // 3: vs current ruby:3.3-alpine
+		{"api", "node:10-alpine"},              // 0: 4 critical CVEs vs current node:22-alpine
+		{"webapp", "nginx:1.15-alpine"},        // 1: 4 critical CVEs vs current nginx:1.29.1-alpine
+		{"user-service", "python:3.5-alpine"},  // 2: 11 critical CVEs vs current python:3.13-alpine
+		{"payment-service", "ruby:2.6-alpine"}, // 3: 4 critical CVEs vs current ruby:3.3-alpine
 		{"grafana", "grafana/grafana:9.0.0"},   // 4: vs current grafana/grafana:12.0.0
 	}
 
@@ -219,10 +219,10 @@ func applyK02ToStack(appStack []client.Object, targetDeployment string, subIssue
 	} else {
 		// Use target deployment (existing behavior)
 		vulnerableImageMap := map[string]string{
-			"api":             "node:16-alpine",
-			"webapp":          "nginx:1.20-alpine",
-			"user-service":    "python:3.9-alpine",
-			"payment-service": "ruby:3.0-alpine",
+			"api":             "node:10-alpine",
+			"webapp":          "nginx:1.15-alpine",
+			"user-service":    "python:3.5-alpine",
+			"payment-service": "ruby:2.6-alpine",
 			"grafana":         "grafana/grafana:9.0.0",
 		}
 		var exists bool
