@@ -4,4 +4,4 @@ metadata:
   name: test-lab
 spec:
   vulnerability: K02
-  subIssue: 0  # API vulnerable image (node:16-alpine)
+  subIssue: 0  # API vulnerable image (node:10-alpine)

@@ -107,10 +107,10 @@ func checkK02(ctx context.Context, c client.Client, targetDeployment, namespace 
 
 	// Define the vulnerable images that we deployed - updated to match applyK02ToStack
 	vulnerableImages := map[string]string{
-		"api":             "node:16-alpine",
-		"webapp":          "nginx:1.20-alpine",
-		"user-service":    "python:3.9-alpine",
-		"payment-service": "ruby:3.0-alpine",
+		"api":             "node:10-alpine",
+		"webapp":          "nginx:1.15-alpine",
+		"user-service":    "python:3.5-alpine",
+		"payment-service": "ruby:2.6-alpine",
 		"grafana":         "grafana/grafana:9.0.0",
 	}
 

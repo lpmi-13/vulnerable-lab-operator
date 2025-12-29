@@ -4,4 +4,4 @@ metadata:
   name: test-lab
 spec:
   vulnerability: K02
-  subIssue: 2  # User-service vulnerable image (python:3.9-alpine)
+  subIssue: 2  # User-service vulnerable image (python:3.5-alpine)

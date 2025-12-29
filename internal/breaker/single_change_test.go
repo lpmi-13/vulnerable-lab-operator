@@ -142,7 +142,13 @@ func TestK02MakesFocusedChanges(t *testing.T) {
 		}
 
 		// Verify it changed to one of the expected vulnerable images
-		expectedImages := []string{"node:16-alpine"}
+		expectedImages := []string{
+			"node:10-alpine",
+			"nginx:1.15-alpine",
+			"python:3.5-alpine",
+			"ruby:2.6-alpine",
+			"grafana/grafana:9.0.0",
+		}
 		found := false
 		for _, expectedImage := range expectedImages {
 			if modifiedImage == expectedImage {

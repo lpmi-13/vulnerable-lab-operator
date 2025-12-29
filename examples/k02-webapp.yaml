@@ -4,4 +4,4 @@ metadata:
   name: test-lab
 spec:
   vulnerability: K02
-  subIssue: 1  # Webapp vulnerable image (nginx:1.20-alpine)
+  subIssue: 1  # Webapp vulnerable image (nginx:1.15-alpine)

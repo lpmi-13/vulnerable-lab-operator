@@ -11,6 +11,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -75,8 +76,9 @@ func (r *VulnerableLabReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	default:
 		logger.Info("Unknown state, resetting to initialized", "state", lab.Status.State)
-		lab.Status.State = v1alpha1.StateInitialized
-		if err := r.Status().Update(ctx, &lab); err != nil {
+		if err := r.updateStatusWithRetry(ctx, &lab, func(lab *v1alpha1.VulnerableLab) {
+			lab.Status.State = v1alpha1.StateInitialized
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
@@ -161,10 +163,11 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 			return ctrl.Result{}, err
 		}
 
-		lab.Status.State = v1alpha1.StateError
-		lab.Status.Message = "Failed to apply vulnerability: " + err.Error()
-		if err := r.Status().Update(ctx, lab); err != nil {
-			logger.Error(err, "Failed to update error status")
+		if updateErr := r.updateStatusWithRetry(ctx, lab, func(lab *v1alpha1.VulnerableLab) {
+			lab.Status.State = v1alpha1.StateError
+			lab.Status.Message = "Failed to apply vulnerability: " + err.Error()
+		}); updateErr != nil {
+			logger.Error(updateErr, "Failed to update error status")
 		}
 		return ctrl.Result{}, err
 	}
@@ -174,11 +177,12 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 		return ctrl.Result{}, err
 	}
 
-	lab.Status.ChosenVulnerability = chosenVuln
-	lab.Status.TargetResource = targetDeployment
-	lab.Status.State = v1alpha1.StateVulnerable
-	lab.Status.Message = fmt.Sprintf("Cluster is vulnerable. Find and fix issue %s. Target: %s", chosenVuln, targetDeployment)
-	if err := r.Status().Update(ctx, lab); err != nil {
+	if err := r.updateStatusWithRetry(ctx, lab, func(lab *v1alpha1.VulnerableLab) {
+		lab.Status.ChosenVulnerability = chosenVuln
+		lab.Status.TargetResource = targetDeployment
+		lab.Status.State = v1alpha1.StateVulnerable
+		lab.Status.Message = fmt.Sprintf("Cluster is vulnerable. Find and fix issue %s. Target: %s", chosenVuln, targetDeployment)
+	}); err != nil {
 		logger.Error(err, "Failed to update status after lab initialization")
 		return ctrl.Result{}, err
 	}
@@ -212,9 +216,10 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 	}
 
 	// Vulnerability fixed - transition to remediated state
-	lab.Status.State = v1alpha1.StateRemediated
-	lab.Status.Message = "Vulnerability fixed! Preparing next challenge..."
-	if err := r.Status().Update(ctx, lab); err != nil {
+	if err := r.updateStatusWithRetry(ctx, lab, func(lab *v1alpha1.VulnerableLab) {
+		lab.Status.State = v1alpha1.StateRemediated
+		lab.Status.Message = "Vulnerability fixed! Preparing next challenge..."
+	}); err != nil {
 		logger.Error(err, "Failed to update remediated status")
 		return ctrl.Result{}, err
 	}
@@ -286,11 +291,12 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 	//   - Status.TargetResource (runtime state) gets cleared
 	// When initializeLab() runs again, it will check the persistent Spec fields
 	// to determine the appropriate randomization/persistence behavior
-	lab.Status.ChosenVulnerability = ""
-	lab.Status.TargetResource = ""
-	lab.Status.State = v1alpha1.StateInitialized
-	lab.Status.Message = "Preparing new challenge..."
-	if err := r.Status().Update(ctx, lab); err != nil {
+	if err := r.updateStatusWithRetry(ctx, lab, func(lab *v1alpha1.VulnerableLab) {
+		lab.Status.ChosenVulnerability = ""
+		lab.Status.TargetResource = ""
+		lab.Status.State = v1alpha1.StateInitialized
+		lab.Status.Message = "Preparing new challenge..."
+	}); err != nil {
 		logger.Error(err, "Failed to reset status after remediation")
 		return ctrl.Result{}, err
 	}
@@ -371,6 +377,38 @@ func (r *VulnerableLabReconciler) cleanupOrphanedK03Resources(ctx context.Contex
 func (r *VulnerableLabReconciler) cleanupClusterRBAC(ctx context.Context, namespace string) {
 	// Currently no cluster-scoped resources to clean up
 	// K03 now uses only namespace-scoped Roles and RoleBindings
+}
+
+// updateStatusWithRetry updates the VulnerableLab status with retry on conflicts
+func (r *VulnerableLabReconciler) updateStatusWithRetry(ctx context.Context, lab *v1alpha1.VulnerableLab, updateFn func(*v1alpha1.VulnerableLab)) error {
+	return wait.ExponentialBackoffWithContext(ctx, wait.Backoff{
+		Steps:    5,
+		Duration: 100 * time.Millisecond,
+		Factor:   2.0,
+		Jitter:   0.1,
+	}, func(ctx context.Context) (bool, error) {
+		// Get the latest version of the object
+		key := client.ObjectKeyFromObject(lab)
+		if err := r.Get(ctx, key, lab); err != nil {
+			return false, err
+		}
+
+		// Apply the update function
+		updateFn(lab)
+
+		// Try to update the status
+		if err := r.Status().Update(ctx, lab); err != nil {
+			if errors.IsConflict(err) {
+				// Retry on conflict
+				return false, nil
+			}
+			// Don't retry on other errors
+			return false, err
+		}
+
+		// Success
+		return true, nil
+	})
 }
 
 // SetupWithManager sets up the controller with the Manager.

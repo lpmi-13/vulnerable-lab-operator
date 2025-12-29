@@ -4,4 +4,4 @@ metadata:
   name: test-lab
 spec:
   vulnerability: K02
-  subIssue: 3  # Payment-service vulnerable image (ruby:3.0-alpine)
+  subIssue: 3  # Payment-service vulnerable image (ruby:2.6-alpine)
