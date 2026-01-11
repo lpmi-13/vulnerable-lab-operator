@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -224,6 +225,8 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 		return ctrl.Result{}, err
 	}
 
+	// Write status to file for terminal visibility
+	r.writeClusterStatus("Vulnerability fixed! Preparing next challenge...")
 	logger.Info("Vulnerability remediated, will reset on next reconciliation", "target", lab.Status.TargetResource)
 	return ctrl.Result{Requeue: true}, nil
 }
@@ -319,11 +322,20 @@ func (r *VulnerableLabReconciler) selectRandomIndex(arrayLength int) int {
 }
 
 // writeClusterStatus writes a simple status message to /tmp/cluster-status for user visibility
+// and broadcasts to all terminals via wall for immediate notification
 func (r *VulnerableLabReconciler) writeClusterStatus(status string) {
+	// Write to file for programmatic access
 	err := os.WriteFile("/tmp/cluster-status", []byte(status), 0644)
 	if err != nil {
 		// Log error but don't fail reconciliation
 		ctrl.Log.WithName("status-file").Error(err, "Failed to write cluster status file")
+	}
+
+	// Broadcast to all terminals via wall for immediate user notification
+	cmd := exec.Command("wall", status)
+	if err := cmd.Run(); err != nil {
+		// Log error but don't fail reconciliation - wall may not be available in all environments
+		ctrl.Log.WithName("wall").Error(err, "Failed to broadcast status via wall")
 	}
 }
 
