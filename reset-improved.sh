@@ -26,7 +26,34 @@ else
     echo "Namespace cleanup complete"
 fi
 
-# Continue with operator setup
+# Clean up operator deployment (if it exists from a previous 'make deploy')
+echo "Cleaning up operator system namespace..."
+kubectl delete namespace vulnerable-k8s-operator-system --ignore-not-found --timeout=10s
+
+# If still exists, force finalize via raw API
+if kubectl get ns vulnerable-k8s-operator-system >/dev/null 2>&1; then
+    echo "Force finalizing operator namespace..."
+    kubectl get ns vulnerable-k8s-operator-system -o json | jq '.spec.finalizers = []' | kubectl replace --raw /api/v1/namespaces/vulnerable-k8s-operator-system/finalize -f - >/dev/null 2>&1 || true
+fi
+
+# Clean up any lingering operator RBAC resources
+kubectl delete clusterrole vulnerable-k8s-operator-manager-role vulnerable-k8s-operator-metrics-reader vulnerable-k8s-operator-proxy-role --ignore-not-found
+kubectl delete clusterrolebinding vulnerable-k8s-operator-manager-rolebinding vulnerable-k8s-operator-proxy-rolebinding --ignore-not-found
+
+# Uninstall CRDs to ensure clean state
+echo "Uninstalling CRDs..."
+make uninstall 2>/dev/null || true
+
+# Setup for local development mode
+echo "Setting up local development mode..."
+echo "- Generating CRD manifests..."
 make manifests
+
+echo "- Installing CRDs only (no operator pod)..."
 make install
+
+echo ""
+echo "Setup complete! Starting operator locally..."
+echo "The operator will run on your host machine (not as a pod)."
+echo ""
 make run

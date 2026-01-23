@@ -55,7 +55,7 @@ $ kubescape scan workload Deployment/<deployment-name> --include-namespaces test
 $ trivy k8s --include-namespaces test-lab --report summary
 ```
 
-- scan a specific deployment in the namespace with trivy
+- scan a specific deployment in the namespace with trivy (this is after you've found something from the above scan and want to narrow things down a bit)
 ```sh
 $ trivy k8s --include-namespaces test-lab --report summary deployments/<deployment-name>
 ```
