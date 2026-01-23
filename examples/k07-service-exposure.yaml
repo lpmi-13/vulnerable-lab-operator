@@ -4,4 +4,4 @@ metadata:
   name: test-lab
 spec:
   vulnerability: K07
-  subIssue: 3  # Service exposure annotation
+  subIssue: 3  # LoadBalancer service exposure

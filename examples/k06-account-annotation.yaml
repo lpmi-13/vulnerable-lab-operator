@@ -1,7 +1,0 @@
-apiVersion: lab.security.lab/v1alpha1
-kind: VulnerableLab
-metadata:
-  name: test-lab
-spec:
-  vulnerability: K06
-  subIssue: 2  # Default service account annotation

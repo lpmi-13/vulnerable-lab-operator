@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,7 +70,7 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 			return fmt.Errorf("failed to apply K06 vulnerability: %w", err)
 		}
 	case "K07":
-		if err := applyK07ToStack(appStack, targetResource, namespace, subIssue); err != nil {
+		if err := applyK07ToStack(&appStack, targetResource, namespace, subIssue); err != nil {
 			return fmt.Errorf("failed to apply K07 vulnerability: %w", err)
 		}
 	case "K08":
@@ -482,40 +483,31 @@ func applyK06ToStack(appStack []client.Object, targetDeployment string, subIssue
 			// Choose vulnerability type based on subIssue parameter or randomly
 			var vulnType int
 			if subIssue != nil {
-				if *subIssue < 0 || *subIssue > 5 {
-					return fmt.Errorf("subIssue %d out of range for K06 (valid: 0-5)", *subIssue)
+				if *subIssue < 0 || *subIssue > 4 {
+					return fmt.Errorf("subIssue %d out of range for K06 (valid: 0-4)", *subIssue)
 				}
 				vulnType = *subIssue
 			} else {
-				// Randomly choose one of six K06 vulnerability types
+				// Randomly choose one of five K06 vulnerability types (removed duplicate K06:2)
 				localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
-				vulnType = localRand.Intn(6)
+				vulnType = localRand.Intn(5)
 			}
 
 			switch vulnType {
 			case 0: // Default service account usage (remove explicit serviceAccountName)
 				dep.Spec.Template.Spec.ServiceAccountName = ""
 
-			case 1: // Service account token annotation
-				if dep.Spec.Template.Annotations == nil {
-					dep.Spec.Template.Annotations = make(map[string]string)
-				}
-				dep.Spec.Template.Annotations["kubernetes.io/service-account.token"] = "required"
+			case 1: // Auto-mount service account token (scanner-detectable via Kubescape C-0034)
+				dep.Spec.Template.Spec.AutomountServiceAccountToken = ptr.To(true)
 
-			case 2: // Default service account annotation
-				if dep.Spec.Template.Annotations == nil {
-					dep.Spec.Template.Annotations = make(map[string]string)
-				}
-				dep.Spec.Template.Annotations["auth.kubernetes.io/default-account"] = "temporary"
-
-			case 3: // Missing fsGroup in PodSecurityContext (flagged by Kubescape C-0057)
+			case 2: // Missing fsGroup in PodSecurityContext (flagged by Kubescape C-0057)
 				// Add a PodSecurityContext with FSGroup, then remove it to create the vulnerability
 				if dep.Spec.Template.Spec.SecurityContext == nil {
 					dep.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{}
 				}
 				dep.Spec.Template.Spec.SecurityContext.FSGroup = nil // Remove fsGroup to create vulnerability
 
-			case 4: // Root user with volume access (flagged by Kubescape C-0013)
+			case 3: // Root user with volume access (flagged by Kubescape C-0013)
 				for i := range dep.Spec.Template.Spec.Containers {
 					if dep.Spec.Template.Spec.Containers[i].SecurityContext != nil {
 						dep.Spec.Template.Spec.Containers[i].SecurityContext.RunAsUser = ptr.To(int64(0))
@@ -523,7 +515,7 @@ func applyK06ToStack(appStack []client.Object, targetDeployment string, subIssue
 					}
 				}
 
-			case 5: // Privileged container with volume access (flagged by Kubescape C-0016)
+			case 4: // Privileged container with volume access (flagged by Kubescape C-0016)
 				for i := range dep.Spec.Template.Spec.Containers {
 					if dep.Spec.Template.Spec.Containers[i].SecurityContext != nil {
 						dep.Spec.Template.Spec.Containers[i].SecurityContext.Privileged = ptr.To(true)
@@ -539,9 +531,11 @@ func applyK06ToStack(appStack []client.Object, targetDeployment string, subIssue
 }
 
 // applyK07ToStack modifies the baseline stack to demonstrate missing network segmentation controls
-func applyK07ToStack(appStack []client.Object, targetDeployment, _ string, subIssue *int) error {
+func applyK07ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int) error {
 	// K07 vulnerabilities are about MISSING network controls rather than broken ones
 	// We demonstrate this by either disabling network policies or exposing services externally
+	// Note: targetDeployment parameter kept for API consistency with other vulnerability functions
+	_ = targetDeployment
 
 	// Choose vulnerability type based on subIssue parameter or randomly
 	var vulnType int
@@ -557,13 +551,13 @@ func applyK07ToStack(appStack []client.Object, targetDeployment, _ string, subIs
 	}
 
 	switch vulnType {
-	case 0: // Unrestricted pod-to-pod communication (network policy disabled annotation)
-		if err := addNetworkPolicyDisabledAnnotation(appStack, targetDeployment); err != nil {
+	case 0: // Unrestricted pod-to-pod communication (delete network policy)
+		if err := addNetworkPolicyDisabledAnnotation(appStack); err != nil {
 			return err
 		}
 
-	case 1: // Network isolation disabled annotation
-		if err := addNetworkIsolationDisabledAnnotation(appStack, targetDeployment); err != nil {
+	case 1: // Network isolation disabled (create allow-all network policy)
+		if err := addNetworkIsolationDisabledAnnotation(appStack, namespace); err != nil {
 			return err
 		}
 
@@ -581,42 +575,53 @@ func applyK07ToStack(appStack []client.Object, targetDeployment, _ string, subIs
 	return nil
 }
 
-// addNetworkPolicyDisabledAnnotation adds annotation indicating network policies are disabled
-func addNetworkPolicyDisabledAnnotation(appStack []client.Object, targetDeployment string) error {
-	for _, obj := range appStack {
-		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
-			if dep.Spec.Template.Annotations == nil {
-				dep.Spec.Template.Annotations = make(map[string]string)
-			}
-			dep.Spec.Template.Annotations["networking.kubernetes.io/network-policy"] = networkPolicyDisabled
-			return nil
+// addNetworkPolicyDisabledAnnotation deletes NetworkPolicy to demonstrate missing network controls
+func addNetworkPolicyDisabledAnnotation(appStack *[]client.Object) error {
+	// Remove any NetworkPolicy from the stack to demonstrate missing network controls
+	var updatedStack []client.Object
+	for _, obj := range *appStack {
+		if _, ok := obj.(*networkingv1.NetworkPolicy); !ok {
+			updatedStack = append(updatedStack, obj)
 		}
 	}
-	return fmt.Errorf("target deployment %s not found", targetDeployment)
+	*appStack = updatedStack
+	return nil
 }
 
-// addNetworkIsolationDisabledAnnotation adds annotation indicating network isolation is disabled
-func addNetworkIsolationDisabledAnnotation(appStack []client.Object, targetDeployment string) error {
-	for _, obj := range appStack {
-		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
-			if dep.Spec.Template.Annotations == nil {
-				dep.Spec.Template.Annotations = make(map[string]string)
-			}
-			dep.Spec.Template.Annotations["networking.kubernetes.io/isolation"] = networkIsolationNone
-			return nil
-		}
+// addNetworkIsolationDisabledAnnotation creates an allow-all NetworkPolicy
+func addNetworkIsolationDisabledAnnotation(appStack *[]client.Object, namespace string) error {
+	// Create an allow-all NetworkPolicy
+	allowAllPolicy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "allow-all-traffic",
+			Namespace: namespace,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{}, // Empty selector matches all pods
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
+				networkingv1.PolicyTypeEgress,
+			},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{
+				{}, // Empty rule allows all ingress
+			},
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{}, // Empty rule allows all egress
+			},
+		},
 	}
-	return fmt.Errorf("target deployment %s not found", targetDeployment)
+
+	// Add the allow-all policy to the stack
+	*appStack = append(*appStack, allowAllPolicy)
+	return nil
 }
 
-// addServiceExposureAnnotation adds annotation to postgres service without changing service type
-func addServiceExposureAnnotation(appStack []client.Object) error {
-	for _, obj := range appStack {
+// addServiceExposureAnnotation changes the postgres service type to LoadBalancer
+func addServiceExposureAnnotation(appStack *[]client.Object) error {
+	for _, obj := range *appStack {
 		if svc, ok := obj.(*corev1.Service); ok && svc.Name == postgresServiceName {
-			if svc.Annotations == nil {
-				svc.Annotations = make(map[string]string)
-			}
-			svc.Annotations["networking.kubernetes.io/exposure"] = externalDatabaseAccess
+			// Change the service type from ClusterIP to LoadBalancer to expose it externally
+			svc.Spec.Type = corev1.ServiceTypeLoadBalancer
 			return nil
 		}
 	}
@@ -624,8 +629,8 @@ func addServiceExposureAnnotation(appStack []client.Object) error {
 }
 
 // exposePostgresServiceAsNodePort modifies the postgres service to be externally accessible
-func exposePostgresServiceAsNodePort(appStack []client.Object) error {
-	for _, obj := range appStack {
+func exposePostgresServiceAsNodePort(appStack *[]client.Object) error {
+	for _, obj := range *appStack {
 		if svc, ok := obj.(*corev1.Service); ok && svc.Name == postgresServiceName {
 			// Change the service type from ClusterIP to NodePort to expose it externally
 			svc.Spec.Type = corev1.ServiceTypeNodePort
@@ -679,28 +684,77 @@ func applyK08ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 	return nil
 }
 
-// addHardcodedSecretsAnnotation adds annotation indicating hardcoded secrets (without changing environment)
+// addHardcodedSecretsAnnotation adds hardcoded secrets as literal environment variables
 func addHardcodedSecretsAnnotation(appStack *[]client.Object, targetDeployment string) error {
 	for _, obj := range *appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
-			if dep.Spec.Template.Annotations == nil {
-				dep.Spec.Template.Annotations = make(map[string]string)
+			container := &dep.Spec.Template.Spec.Containers[0]
+
+			// Add hardcoded secrets as literal environment variables
+			hardcodedEnvs := []corev1.EnvVar{
+				{
+					Name:  "JWT_SECRET",
+					Value: "super-secure-jwt-signing-key-2024",
+				},
+				{
+					Name:  "API_KEY",
+					Value: testAPIKey,
+				},
+				{
+					Name:  "REDIS_PASSWORD",
+					Value: "redis-secure-password-123",
+				},
 			}
-			dep.Spec.Template.Annotations["config.kubernetes.io/hardcoded-secrets"] = "development-mode"
+
+			container.Env = append(container.Env, hardcodedEnvs...)
 			return nil
 		}
 	}
 	return fmt.Errorf("target deployment %s not found", targetDeployment)
 }
 
-// addInsecureVolumeAnnotation adds annotation indicating insecure volume permissions (without changing volumes)
+// addInsecureVolumeAnnotation mounts a secret volume with insecure permissions (0644)
 func addInsecureVolumeAnnotation(appStack *[]client.Object, targetDeployment string) error {
 	for _, obj := range *appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
-			if dep.Spec.Template.Annotations == nil {
-				dep.Spec.Template.Annotations = make(map[string]string)
+			// Add a secret volume with insecure permissions
+			insecureMode := int32(0644) // World-readable
+
+			// Check if there's already a secret volume, modify its permissions
+			volumeModified := false
+			for i := range dep.Spec.Template.Spec.Volumes {
+				if dep.Spec.Template.Spec.Volumes[i].Secret != nil {
+					dep.Spec.Template.Spec.Volumes[i].Secret.DefaultMode = &insecureMode
+					volumeModified = true
+					break
+				}
 			}
-			dep.Spec.Template.Annotations["security.kubernetes.io/volume-permissions"] = "debugging-enabled"
+
+			// If no secret volume exists, create one
+			if !volumeModified {
+				secretVolume := corev1.Volume{
+					Name: "insecure-secrets",
+					VolumeSource: corev1.VolumeSource{
+						Secret: &corev1.SecretVolumeSource{
+							SecretName:  paymentAPIKeySecret,
+							DefaultMode: &insecureMode,
+						},
+					},
+				}
+				dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, secretVolume)
+
+				// Also add a volume mount to make it more realistic
+				volumeMount := corev1.VolumeMount{
+					Name:      "insecure-secrets",
+					MountPath: "/etc/secrets",
+					ReadOnly:  true,
+				}
+				dep.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+					dep.Spec.Template.Spec.Containers[0].VolumeMounts,
+					volumeMount,
+				)
+			}
+
 			return nil
 		}
 	}

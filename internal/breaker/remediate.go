@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 
@@ -203,40 +204,18 @@ func checkK06(ctx context.Context, c client.Client, targetDeployment, namespace 
 		return false, fmt.Errorf("failed to get deployment %s: %w", targetDeployment, err)
 	}
 
-	container := dep.Spec.Template.Spec.Containers[0]
 	vulnerabilitiesFound := false
 
-	// Check for auto-mounted service account tokens
-	if dep.Spec.Template.Spec.AutomountServiceAccountToken != nil && *dep.Spec.Template.Spec.AutomountServiceAccountToken {
-		logger.Info("K06 vulnerability still active: service account token auto-mounting enabled", "target", targetDeployment)
-		vulnerabilitiesFound = true
-	}
-
-	// Check for hardcoded credentials (look for values that should be from secrets)
-	for _, env := range container.Env {
-		if env.ValueFrom == nil && env.Value != "" {
-			// Check for common secret-like patterns
-			if containsSensitiveValue(env.Name, env.Value) {
-				logger.Info("K06 vulnerability still active: hardcoded credentials found", "target", targetDeployment, "env", env.Name)
-				vulnerabilitiesFound = true
-				break
-			}
-		}
-	}
-
-	// Check for default service account usage (empty serviceAccountName)
+	// Check for default service account usage (empty serviceAccountName) - K06:0
 	if dep.Spec.Template.Spec.ServiceAccountName == "" {
 		logger.Info("K06 vulnerability still active: using default service account", "target", targetDeployment)
 		vulnerabilitiesFound = true
 	}
 
-	// Check for exposed authentication environment variables
-	for _, env := range container.Env {
-		if isExposedAuthEnv(env.Name, env.Value) {
-			logger.Info("K06 vulnerability still active: exposed authentication token", "target", targetDeployment, "env", env.Name)
-			vulnerabilitiesFound = true
-			break
-		}
+	// Check for auto-mounted service account tokens - K06:1
+	if dep.Spec.Template.Spec.AutomountServiceAccountToken != nil && *dep.Spec.Template.Spec.AutomountServiceAccountToken {
+		logger.Info("K06 vulnerability still active: service account token auto-mounting enabled", "target", targetDeployment)
+		vulnerabilitiesFound = true
 	}
 
 	// Check for missing fsGroup in PodSecurityContext
@@ -271,64 +250,30 @@ func checkK06(ctx context.Context, c client.Client, targetDeployment, namespace 
 	return true, nil
 }
 
-// containsSensitiveValue checks if an environment variable contains sensitive hardcoded values
-func containsSensitiveValue(name, value string) bool {
-	// Check for database credentials that should be from secrets
-	if name == "POSTGRES_USER" && value == "appuser" {
-		return true
-	}
-	if name == "POSTGRES_PASSWORD" && value == "apppassword" {
-		return true
-	}
-	if name == "API_KEY" && value == testAPIKey {
-		return true
-	}
-	return false
-}
-
-// isExposedAuthEnv checks if an environment variable exposes authentication tokens
-func isExposedAuthEnv(name, value string) bool {
-	sensitiveEnvNames := []string{
-		"JWT_SECRET", "API_TOKEN", "AUTH_KEY", "SESSION_SECRET",
-		"STRIPE_SECRET", "WEBHOOK_SECRET", "AUTH_TOKEN", "SECRET_KEY",
-	}
-
-	for _, sensitiveEnv := range sensitiveEnvNames {
-		if name == sensitiveEnv && value != "" {
-			return true
-		}
-	}
-	return false
-}
-
 // checkK07 verifies if the network segmentation vulnerability has been addressed
 func checkK07(ctx context.Context, c client.Client, targetDeployment, namespace string) (bool, error) {
 	logger := log.FromContext(ctx)
 
-	// Get the deployment to check annotations
-	dep := &appsv1.Deployment{}
-	err := c.Get(ctx, client.ObjectKey{Name: targetDeployment, Namespace: namespace}, dep)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// The deployment was deleted, which is a valid fix
-			logger.Info("K07 vulnerability remediated: target deployment was deleted", "target", targetDeployment)
-			return true, nil
-		}
-		return false, fmt.Errorf("failed to get deployment %s: %w", targetDeployment, err)
-	}
-
 	vulnerabilitiesFound := false
 
-	// Check for unrestricted pod communication annotations
-	if dep.Spec.Template.Annotations != nil {
-		if policy, exists := dep.Spec.Template.Annotations["networking.kubernetes.io/network-policy"]; exists && policy == "disabled" {
-			logger.Info("K07 vulnerability still active: network policy disabled", "target", targetDeployment)
-			vulnerabilitiesFound = true
-		}
-		if isolation, exists := dep.Spec.Template.Annotations["networking.kubernetes.io/isolation"]; exists && isolation == "none" {
-			logger.Info("K07 vulnerability still active: network isolation disabled", "target", targetDeployment)
-			vulnerabilitiesFound = true
-		}
+	// Check for missing NetworkPolicy (vulnerability case 0 - deleted network policy)
+	netpol := &networkingv1.NetworkPolicy{}
+	err := c.Get(ctx, client.ObjectKey{Name: "api-network-policy", Namespace: namespace}, netpol)
+	if errors.IsNotFound(err) {
+		logger.Info("K07 vulnerability still active: network policy missing", "target", targetDeployment)
+		vulnerabilitiesFound = true
+	} else if err != nil {
+		return false, fmt.Errorf("failed to check network policy: %w", err)
+	}
+
+	// Check for allow-all NetworkPolicy (vulnerability case 1)
+	allowAllPolicy := &networkingv1.NetworkPolicy{}
+	err = c.Get(ctx, client.ObjectKey{Name: "allow-all-traffic", Namespace: namespace}, allowAllPolicy)
+	if err == nil {
+		logger.Info("K07 vulnerability still active: allow-all network policy exists", "target", targetDeployment)
+		vulnerabilitiesFound = true
+	} else if !errors.IsNotFound(err) {
+		return false, fmt.Errorf("failed to check allow-all policy: %w", err)
 	}
 
 	// Check for postgres service exposed as NodePort (vulnerability case 2)
@@ -339,12 +284,10 @@ func checkK07(ctx context.Context, c client.Client, targetDeployment, namespace 
 			logger.Info("K07 vulnerability still active: postgres service exposed as NodePort", "target", targetDeployment)
 			vulnerabilitiesFound = true
 		}
-		// Check for the service exposure annotation (vulnerability case 3)
-		if postgresSvc.Annotations != nil {
-			if exposure, exists := postgresSvc.Annotations["networking.kubernetes.io/exposure"]; exists && exposure == "external-database-access" {
-				logger.Info("K07 vulnerability still active: postgres service has exposure annotation", "target", targetDeployment)
-				vulnerabilitiesFound = true
-			}
+		// Check for LoadBalancer service type (vulnerability case 3)
+		if postgresSvc.Spec.Type == corev1.ServiceTypeLoadBalancer {
+			logger.Info("K07 vulnerability still active: postgres service exposed as LoadBalancer", "target", targetDeployment)
+			vulnerabilitiesFound = true
 		}
 	} else if !errors.IsNotFound(err) {
 		// Unexpected error accessing postgres service
@@ -447,18 +390,6 @@ func checkK08(ctx context.Context, c client.Client, targetDeployment, namespace 
 		}
 		if vulnerabilitiesFound {
 			break
-		}
-	}
-
-	// Check annotations that indicate vulnerable configurations
-	if dep.Spec.Template.Annotations != nil {
-		if _, exists := dep.Spec.Template.Annotations["config.kubernetes.io/hardcoded-secrets"]; exists {
-			logger.Info("K08 vulnerability still active: hardcoded secrets annotation found", "target", targetDeployment)
-			vulnerabilitiesFound = true
-		}
-		if _, exists := dep.Spec.Template.Annotations["security.kubernetes.io/volume-permissions"]; exists {
-			logger.Info("K08 vulnerability still active: insecure volume permissions annotation found", "target", targetDeployment)
-			vulnerabilitiesFound = true
 		}
 	}
 

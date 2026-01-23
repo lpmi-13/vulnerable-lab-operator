@@ -4,4 +4,4 @@ metadata:
   name: test-lab
 spec:
   vulnerability: K08
-  subIssue: 1  # Hardcoded secrets annotation
+  subIssue: 1  # Hardcoded secrets in env vars

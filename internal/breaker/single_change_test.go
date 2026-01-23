@@ -345,7 +345,7 @@ func TestK07MakesFocusedChanges(t *testing.T) {
 			t.Fatal("Could not find postgres-service in baseline stack")
 		}
 
-		err := applyK07ToStack(appStack, "api", namespace, nil)
+		err := applyK07ToStack(&appStack, "api", namespace, nil)
 		if err != nil {
 			t.Fatalf("applyK07ToStack failed: %v", err)
 		}
@@ -532,9 +532,9 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 		// K07 doesn't add resources, so it uses the original signature
 		k07Vulns := []struct {
 			name string
-			fn   func([]client.Object, string, string) error
+			fn   func(*[]client.Object, string, string) error
 		}{
-			{"K07", func(stack []client.Object, target, ns string) error { return applyK07ToStack(stack, target, ns, nil) }},
+			{"K07", func(stack *[]client.Object, target, ns string) error { return applyK07ToStack(stack, target, ns, nil) }},
 		}
 
 		for _, vuln := range namespacedVulns {
@@ -547,7 +547,7 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 
 		for _, vuln := range k07Vulns {
 			testStack := baseline.GetAppStack(namespace)
-			err := vuln.fn(testStack, target, namespace)
+			err := vuln.fn(&testStack, target, namespace)
 			if err != nil {
 				t.Errorf("%s failed on target %s: %v", vuln.name, target, err)
 			}

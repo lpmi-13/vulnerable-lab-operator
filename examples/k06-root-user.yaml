@@ -4,4 +4,4 @@ metadata:
   name: test-lab
 spec:
   vulnerability: K06
-  subIssue: 4  # Root user with volume access
+  subIssue: 3  # Root user with volume access

@@ -4,4 +4,4 @@ metadata:
   name: test-lab
 spec:
   vulnerability: K06
-  subIssue: 3  # Missing fsGroup in PodSecurityContext
+  subIssue: 2  # Missing fsGroup in PodSecurityContext

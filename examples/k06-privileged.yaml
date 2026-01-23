@@ -4,4 +4,4 @@ metadata:
   name: test-lab
 spec:
   vulnerability: K06
-  subIssue: 5  # Privileged container with volume access
+  subIssue: 4  # Privileged container with volume access

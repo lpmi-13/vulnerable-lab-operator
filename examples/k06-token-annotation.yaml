@@ -4,4 +4,4 @@ metadata:
   name: test-lab
 spec:
   vulnerability: K06
-  subIssue: 1  # Service account token annotation
+  subIssue: 1  # Auto-mount service account token

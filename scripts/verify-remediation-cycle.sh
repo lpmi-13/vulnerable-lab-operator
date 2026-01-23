@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Comprehensive Remediation Cycle Verification Script
-# Tests all 24 sub-issues across 6 OWASP K8s Top 10 vulnerability categories
+# Tests all 22 sub-issues across 6 OWASP K8s Top 10 vulnerability categories
 #
 # State machine flow: Initialized -> Vulnerable -> Remediated -> (reset) -> Vulnerable (new)
 # Controller checks remediation every 30 seconds
@@ -10,16 +10,18 @@
 #   K01 - Insecure Workload Configurations (3 sub-issues)
 #   K02 - Supply Chain Vulnerabilities (5 sub-issues)
 #   K03 - Overly Permissive RBAC (3 sub-issues)
-#   K06 - Broken Authentication (6 sub-issues)
+#   K06 - Broken Authentication (5 sub-issues)
 #   K07 - Missing Network Segmentation (4 sub-issues)
 #   K08 - Secrets Management (3 sub-issues)
 #
 # Usage:
-#   ./verify-remediation-cycle.sh                    # Run all 24 tests
-#   ./verify-remediation-cycle.sh --category K01    # Run only K01 tests (3 tests)
-#   ./verify-remediation-cycle.sh --verbose         # Run with verbose output
-#   ./verify-remediation-cycle.sh --dry-run         # Show test plan without executing
-#   ./verify-remediation-cycle.sh --help            # Show help message
+#   ./verify-remediation-cycle.sh                       # Run all 22 tests
+#   ./verify-remediation-cycle.sh --category K01        # Run only K01 tests (3 tests)
+#   ./verify-remediation-cycle.sh --verbose             # Run with verbose output
+#   ./verify-remediation-cycle.sh --dry-run             # Show test plan without executing
+#   ./verify-remediation-cycle.sh --programmatic-only   # Skip scanner checks, use only API-based verification
+#   ./verify-remediation-cycle.sh --representative      # Run quick mode with 6 representative tests
+#   ./verify-remediation-cycle.sh --help                # Show help message
 
 set -euo pipefail
 
@@ -53,6 +55,8 @@ SKIP_COUNT=0
 VERBOSE=false
 CATEGORY_FILTER=""
 DRY_RUN=false
+PROGRAMMATIC_ONLY=false
+REPRESENTATIVE_MODE=false
 
 # Arrays for tracking results
 declare -a PASSED_TESTS=()
@@ -123,17 +127,23 @@ in the vulnerable-k8s-operator. Tests the complete state machine flow:
 Initialized -> Vulnerable -> Remediated -> (reset) -> Vulnerable (new)
 
 OPTIONS:
-    -c, --category CATEGORY  Run tests for specific category only
-                             Valid: K01, K02, K03, K06, K07, K08
-    -v, --verbose            Enable verbose/debug output
-    -d, --dry-run            Show test plan without executing tests
-    -h, --help               Show this help message
+    -c, --category CATEGORY     Run tests for specific category only
+                                Valid: K01, K02, K03, K06, K07, K08
+    -v, --verbose               Enable verbose/debug output
+    -d, --dry-run               Show test plan without executing tests
+    -p, --programmatic-only     Skip scanner checks, use only programmatic verification
+                                (API-based kubectl/jq checks defined in vulnerability matrix)
+    -r, --representative        Run quick mode with 6 representative tests
+                                (K01:0, K02:2, K03:0, K06:0, K07:2, K08:0)
+    -h, --help                  Show this help message
 
 EXAMPLES:
-    $(basename "$0")                     # Run all 24 tests
-    $(basename "$0") -c K01              # Run only K01 tests (3 tests)
-    $(basename "$0") -c K02 -v           # Run K02 tests with verbose output
-    $(basename "$0") --dry-run           # Show what would be tested
+    $(basename "$0")                        # Run all 22 tests
+    $(basename "$0") -c K01                 # Run only K01 tests (3 tests)
+    $(basename "$0") -c K02 -v              # Run K02 tests with verbose output
+    $(basename "$0") --dry-run              # Show what would be tested
+    $(basename "$0") --programmatic-only    # Skip scanner verification
+    $(basename "$0") --representative       # Run 6 quick representative tests
 
 VULNERABILITY CATEGORIES:
     K01 - Insecure Workload Configurations (3 sub-issues)
@@ -153,13 +163,12 @@ VULNERABILITY CATEGORIES:
           1: Default service account permissions
           2: Excessive secrets access
 
-    K06 - Broken Authentication (6 sub-issues)
+    K06 - Broken Authentication (5 sub-issues)
           0: Default service account usage
           1: Token annotation
-          2: Account annotation
-          3: Missing fsGroup
-          4: Root user
-          5: Privileged container
+          2: Missing fsGroup
+          3: Root user
+          4: Privileged container
 
     K07 - Missing Network Segmentation (4 sub-issues)
           0: Network policy disabled annotation
@@ -172,10 +181,21 @@ VULNERABILITY CATEGORIES:
           1: Hardcoded secrets annotation
           2: Insecure volume permissions annotation
 
+REPRESENTATIVE MODE:
+    The --representative flag runs a quick smoke test using 6 carefully selected tests
+    that cover all major vulnerability categories and detection methods:
+    - K01:0 (Privileged) - Most scanner-detectable workload issue
+    - K02:2 (Python image) - Has 11 critical CVEs
+    - K03:0 (Overpermissive RBAC) - Creates detectable RBAC resources
+    - K06:0 (Default SA) - Programmatically verifiable authentication issue
+    - K07:2 (NodePort) - Service-level network exposure
+    - K08:0 (ConfigMap) - Creates detectable secret management resource
+
 REQUIREMENTS:
     - kubectl configured with cluster access
     - VulnerableLab CRD must be installed
     - Operator must be running in the cluster
+    - Optional: Security scanners (kubescape, trivy, kube-bench, kube-score)
 
 EOF
     exit 0
@@ -297,9 +317,16 @@ get_chosen_vulnerability() {
 # Verify that at least one scanner detects the vulnerability
 # Uses cascading approach: kubescape -> kube-bench -> kube-score
 # For K02 (image vulnerabilities), uses trivy k8s mode
+# Note: Can be skipped with --programmatic-only flag
 verify_scanner_detection() {
     local category="$1"
     local target="$2"
+
+    # Skip scanner verification if --programmatic-only flag is set
+    if [[ "$PROGRAMMATIC_ONLY" == "true" ]]; then
+        log_verbose "Skipping scanner verification (--programmatic-only mode)"
+        return 0
+    fi
 
     log_verbose "Running scanner verification for $category on $target"
 
@@ -363,6 +390,287 @@ verify_scanner_detection() {
 
     log_warning "No scanner detected the vulnerability for $category"
     return 1
+}
+
+# =============================================================================
+# Programmatic Verification Functions
+# =============================================================================
+# These functions perform kubectl/jq-based API checks as defined in the
+# vulnerability matrix (testdata/vulnerability-matrix.yaml).
+# These checks are used for baseline differencing and validation.
+
+# Programmatic verification dispatcher
+# Takes a vulnerability ID (e.g., K01:0) and target deployment
+verify_programmatic() {
+    local vuln_id="$1"
+    local target="$2"
+
+    log_verbose "Running programmatic verification for $vuln_id on target: $target"
+
+    case "$vuln_id" in
+        # K01 - Insecure Workload Configurations
+        K01:0)
+            verify_k01_0_privileged "$target"
+            ;;
+        K01:1)
+            verify_k01_1_root "$target"
+            ;;
+        K01:2)
+            verify_k01_2_capabilities "$target"
+            ;;
+
+        # K02 - Supply Chain Vulnerabilities
+        K02:0)
+            verify_k02_0_node_image "$target"
+            ;;
+        K02:1)
+            verify_k02_1_nginx_image "$target"
+            ;;
+        K02:2)
+            verify_k02_2_python_image "$target"
+            ;;
+        K02:3)
+            verify_k02_3_ruby_image "$target"
+            ;;
+        K02:4)
+            verify_k02_4_grafana_image "$target"
+            ;;
+
+        # K03 - Overly Permissive RBAC
+        K03:0)
+            verify_k03_0_overpermissive "$target"
+            ;;
+        K03:1)
+            verify_k03_1_default_permissions "$target"
+            ;;
+        K03:2)
+            verify_k03_2_secrets_access "$target"
+            ;;
+
+        # K06 - Broken Authentication
+        K06:0)
+            verify_k06_0_default_sa "$target"
+            ;;
+        K06:1)
+            verify_k06_1_token_annotation "$target"
+            ;;
+        K06:2)
+            verify_k06_2_missing_fsgroup "$target"
+            ;;
+        K06:3)
+            verify_k06_3_root_user "$target"
+            ;;
+        K06:4)
+            verify_k06_4_privileged "$target"
+            ;;
+
+        # K07 - Missing Network Segmentation
+        K07:0)
+            verify_k07_0_no_netpol "$target"
+            ;;
+        K07:1)
+            verify_k07_1_no_isolation "$target"
+            ;;
+        K07:2)
+            verify_k07_2_nodeport "$target"
+            ;;
+        K07:3)
+            verify_k07_3_service_exposure "$target"
+            ;;
+
+        # K08 - Secrets Management
+        K08:0)
+            verify_k08_0_configmap "$target"
+            ;;
+        K08:1)
+            verify_k08_1_hardcoded "$target"
+            ;;
+        K08:2)
+            verify_k08_2_volume_perms "$target"
+            ;;
+
+        *)
+            log_warning "Unknown vulnerability ID for programmatic verification: $vuln_id"
+            return 1
+            ;;
+    esac
+}
+
+# K01:0 - Privileged Container
+verify_k01_0_privileged() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.spec.template.spec.containers[0].securityContext.privileged == true' >/dev/null
+}
+
+# K01:1 - Running as Root
+verify_k01_1_root() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.spec.template.spec.containers[0].securityContext.runAsUser == 0' >/dev/null
+}
+
+# K01:2 - Dangerous Capabilities
+verify_k01_2_capabilities() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.spec.template.spec.containers[0].securityContext.capabilities.add[] | select(. == "SYS_ADMIN" or . == "NET_ADMIN")' >/dev/null
+}
+
+# K02:0 - Vulnerable Node Image
+verify_k02_0_node_image() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -r '.spec.template.spec.containers[0].image' | grep -q 'node:10-alpine'
+}
+
+# K02:1 - Vulnerable Nginx Image
+verify_k02_1_nginx_image() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -r '.spec.template.spec.containers[0].image' | grep -q 'nginx:1.15-alpine'
+}
+
+# K02:2 - Vulnerable Python Image
+verify_k02_2_python_image() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -r '.spec.template.spec.containers[0].image' | grep -q 'python:3.5-alpine'
+}
+
+# K02:3 - Vulnerable Ruby Image
+verify_k02_3_ruby_image() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -r '.spec.template.spec.containers[0].image' | grep -q 'ruby:2.6-alpine'
+}
+
+# K02:4 - Vulnerable Grafana Image
+verify_k02_4_grafana_image() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -r '.spec.template.spec.containers[0].image' | grep -q 'grafana/grafana:9.0.0'
+}
+
+# K03:0 - Overpermissive RBAC
+verify_k03_0_overpermissive() {
+    local target="$1"
+    kubectl get role "${NAMESPACE}-overpermissive" -n "$NAMESPACE" >/dev/null 2>&1 && \
+    kubectl get rolebinding "${NAMESPACE}-overpermissive-binding" -n "$NAMESPACE" >/dev/null 2>&1
+}
+
+# K03:1 - Default Service Account Permissions
+verify_k03_1_default_permissions() {
+    local target="$1"
+    kubectl get role "${NAMESPACE}-default-permissions" -n "$NAMESPACE" >/dev/null 2>&1 && \
+    kubectl get rolebinding "${NAMESPACE}-default-binding" -n "$NAMESPACE" >/dev/null 2>&1
+}
+
+# K03:2 - Excessive Secrets Access
+verify_k03_2_secrets_access() {
+    local target="$1"
+    kubectl get role "${NAMESPACE}-secrets-reader" -n "$NAMESPACE" >/dev/null 2>&1 && \
+    kubectl get rolebinding "${NAMESPACE}-secrets-binding" -n "$NAMESPACE" >/dev/null 2>&1
+}
+
+# K06:0 - Default Service Account
+verify_k06_0_default_sa() {
+    local target="$1"
+    local sa
+    sa=$(kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -r '.spec.template.spec.serviceAccountName // ""')
+    [[ -z "$sa" || "$sa" == "default" ]]
+}
+
+# K06:1 - Auto-mount Service Account Token
+verify_k06_1_token_annotation() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.spec.template.spec.automountServiceAccountToken == true' >/dev/null
+}
+
+# K06:2 - Missing fsGroup
+verify_k06_2_missing_fsgroup() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.spec.template.spec.securityContext.fsGroup == null' >/dev/null
+}
+
+# K06:3 - Root User
+verify_k06_3_root_user() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.spec.template.spec.containers[0].securityContext.runAsUser == 0' >/dev/null
+}
+
+# K06:4 - Privileged Container
+verify_k06_4_privileged() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.spec.template.spec.containers[0].securityContext.privileged == true' >/dev/null
+}
+
+# K07:0 - Missing NetworkPolicy (annotation-based check)
+verify_k07_0_no_netpol() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.spec.template.metadata.annotations."networking.kubernetes.io/network-policy"' >/dev/null
+}
+
+# K07:1 - Network Isolation Disabled (annotation-based check)
+verify_k07_1_no_isolation() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.spec.template.metadata.annotations."networking.kubernetes.io/isolation"' >/dev/null
+}
+
+# K07:2 - NodePort Service Exposure
+verify_k07_2_nodeport() {
+    local target="$1"
+    # Try postgres-service first, then target-based service names
+    local service_name="postgres-service"
+    if kubectl get service "$target" -n "$NAMESPACE" &>/dev/null; then
+        service_name="$target"
+    elif kubectl get service "${target}-service" -n "$NAMESPACE" &>/dev/null; then
+        service_name="${target}-service"
+    fi
+    kubectl get svc "$service_name" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.spec.type == "NodePort"' >/dev/null
+}
+
+# K07:3 - Service Exposure Annotation
+verify_k07_3_service_exposure() {
+    local target="$1"
+    # Try postgres-service first, then target-based service names
+    local service_name="postgres-service"
+    if kubectl get service "$target" -n "$NAMESPACE" &>/dev/null; then
+        service_name="$target"
+    elif kubectl get service "${target}-service" -n "$NAMESPACE" &>/dev/null; then
+        service_name="${target}-service"
+    fi
+    kubectl get svc "$service_name" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.metadata.annotations."networking.kubernetes.io/exposure"' >/dev/null
+}
+
+# K08:0 - Secrets in ConfigMap
+verify_k08_0_configmap() {
+    local target="$1"
+    kubectl get configmap "${target}-config" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.data | to_entries[] | select(.value | contains("secret") or contains("password") or contains("key"))' >/dev/null
+}
+
+# K08:1 - Hardcoded Secrets in Env Vars (annotation-based check)
+verify_k08_1_hardcoded() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.spec.template.metadata.annotations."config.kubernetes.io/hardcoded-secrets"' >/dev/null
+}
+
+# K08:2 - Insecure Volume Permissions (annotation-based check)
+verify_k08_2_volume_perms() {
+    local target="$1"
+    kubectl get deployment "$target" -n "$NAMESPACE" -o json 2>/dev/null | \
+        jq -e '.spec.template.metadata.annotations."security.kubernetes.io/volume-permissions"' >/dev/null
 }
 
 # Verify that the remediation message appears in the status
@@ -486,19 +794,9 @@ remediate_k06_token_annotation() {
     ]'
 }
 
-remediate_k06_account_annotation() {
-    local target="$1"
-    log_verbose "Remediating K06-2 (account annotation) on $target"
-
-    # Remove the default-account annotation
-    kubectl patch deployment "$target" -n "$NAMESPACE" --type='json' -p='[
-        {"op": "remove", "path": "/spec/template/metadata/annotations/auth.kubernetes.io~1default-account"}
-    ]'
-}
-
 remediate_k06_missing_fsgroup() {
     local target="$1"
-    log_verbose "Remediating K06-3 (missing fsGroup) on $target"
+    log_verbose "Remediating K06-2 (missing fsGroup) on $target"
 
     # Add fsGroup to the pod security context
     kubectl patch deployment "$target" -n "$NAMESPACE" --type='json' -p='[
@@ -508,7 +806,7 @@ remediate_k06_missing_fsgroup() {
 
 remediate_k06_root_user() {
     local target="$1"
-    log_verbose "Remediating K06-4 (root user) on $target"
+    log_verbose "Remediating K06-3 (root user) on $target"
 
     kubectl patch deployment "$target" -n "$NAMESPACE" --type='json' -p='[
         {"op": "replace", "path": "/spec/template/spec/containers/0/securityContext/runAsUser", "value": 1000}
@@ -517,7 +815,7 @@ remediate_k06_root_user() {
 
 remediate_k06_privileged() {
     local target="$1"
-    log_verbose "Remediating K06-5 (privileged) on $target"
+    log_verbose "Remediating K06-4 (privileged) on $target"
 
     kubectl patch deployment "$target" -n "$NAMESPACE" --type='json' -p='[
         {"op": "replace", "path": "/spec/template/spec/containers/0/securityContext/privileged", "value": false}
@@ -1004,6 +1302,14 @@ run_k07_service_test() {
 run_k01_tests() {
     log_header "K01 - Insecure Workload Configurations (3 sub-issues)"
 
+    # Representative mode: only run K01:0
+    if [[ "$REPRESENTATIVE_MODE" == "true" ]]; then
+        run_test "K01-0: Privileged Container" \
+            "k01-privileged.yaml" \
+            remediate_k01_privileged
+        return 0
+    fi
+
     run_test "K01-0: Privileged Container" \
         "k01-privileged.yaml" \
         remediate_k01_privileged
@@ -1019,6 +1325,13 @@ run_k01_tests() {
 
 run_k02_tests() {
     log_header "K02 - Supply Chain Vulnerabilities (5 sub-issues)"
+
+    # Representative mode: only run K02:2 (Python - has 11 critical CVEs)
+    if [[ "$REPRESENTATIVE_MODE" == "true" ]]; then
+        run_k02_test "K02-2: User Service (python:3.5-alpine -> python:3.13-alpine)" \
+            "k02-user-service.yaml" 2
+        return 0
+    fi
 
     run_k02_test "K02-0: API (node:10-alpine -> node:22-alpine)" \
         "k02-api.yaml" 0
@@ -1039,6 +1352,13 @@ run_k02_tests() {
 run_k03_tests() {
     log_header "K03 - Overly Permissive RBAC (3 sub-issues)"
 
+    # Representative mode: only run K03:0
+    if [[ "$REPRESENTATIVE_MODE" == "true" ]]; then
+        run_k03_test "K03-0: Overpermissive RBAC" \
+            "k03-overpermissive-rbac.yaml" 0
+        return 0
+    fi
+
     run_k03_test "K03-0: Overpermissive RBAC" \
         "k03-overpermissive-rbac.yaml" 0
 
@@ -1050,7 +1370,15 @@ run_k03_tests() {
 }
 
 run_k06_tests() {
-    log_header "K06 - Broken Authentication (6 sub-issues)"
+    log_header "K06 - Broken Authentication (5 sub-issues)"
+
+    # Representative mode: only run K06:0
+    if [[ "$REPRESENTATIVE_MODE" == "true" ]]; then
+        run_test "K06-0: Default Service Account" \
+            "k06-default-account.yaml" \
+            remediate_k06_default_account
+        return 0
+    fi
 
     run_test "K06-0: Default Service Account" \
         "k06-default-account.yaml" \
@@ -1060,25 +1388,29 @@ run_k06_tests() {
         "k06-token-annotation.yaml" \
         remediate_k06_token_annotation
 
-    run_test "K06-2: Account Annotation" \
-        "k06-account-annotation.yaml" \
-        remediate_k06_account_annotation
-
-    run_test "K06-3: Missing fsGroup" \
+    run_test "K06-2: Missing fsGroup" \
         "k06-missing-fsgroup.yaml" \
         remediate_k06_missing_fsgroup
 
-    run_test "K06-4: Root User" \
+    run_test "K06-3: Root User" \
         "k06-root-user.yaml" \
         remediate_k06_root_user
 
-    run_test "K06-5: Privileged Container" \
+    run_test "K06-4: Privileged Container" \
         "k06-privileged.yaml" \
         remediate_k06_privileged
 }
 
 run_k07_tests() {
     log_header "K07 - Missing Network Segmentation (4 sub-issues)"
+
+    # Representative mode: only run K07:2 (NodePort - service-level change)
+    if [[ "$REPRESENTATIVE_MODE" == "true" ]]; then
+        run_k07_service_test "K07-2: Database Exposure (NodePort)" \
+            "k07-db-exposure.yaml" \
+            remediate_k07_db_exposure
+        return 0
+    fi
 
     run_test "K07-0: Network Policy Disabled" \
         "k07-no-netpol.yaml" \
@@ -1099,6 +1431,14 @@ run_k07_tests() {
 
 run_k08_tests() {
     log_header "K08 - Secrets Management (3 sub-issues)"
+
+    # Representative mode: only run K08:0 (ConfigMap - creates detectable resource)
+    if [[ "$REPRESENTATIVE_MODE" == "true" ]]; then
+        run_test "K08-0: Secrets in ConfigMap" \
+            "k08-secrets-configmap.yaml" \
+            remediate_k08_secrets_configmap
+        return 0
+    fi
 
     run_test "K08-0: Secrets in ConfigMap" \
         "k08-secrets-configmap.yaml" \
@@ -1220,6 +1560,14 @@ main() {
                 DRY_RUN=true
                 shift
                 ;;
+            -p|--programmatic-only)
+                PROGRAMMATIC_ONLY=true
+                shift
+                ;;
+            -r|--representative)
+                REPRESENTATIVE_MODE=true
+                shift
+                ;;
             -h|--help)
                 usage
                 ;;
@@ -1229,6 +1577,12 @@ main() {
                 ;;
         esac
     done
+
+    # Validate mutually exclusive options
+    if [[ "$REPRESENTATIVE_MODE" == "true" && -n "$CATEGORY_FILTER" ]]; then
+        log_error "Cannot use --representative with --category filter"
+        exit 1
+    fi
 
     # Validate category filter if specified
     if [[ -n "$CATEGORY_FILTER" ]]; then
@@ -1251,14 +1605,18 @@ main() {
     echo -e "${BOLD} Remediation Cycle Verification Script     ${NC}"
     echo -e "${BOLD}============================================${NC}"
     echo ""
-    echo "Namespace:       $NAMESPACE"
-    echo "Examples Dir:    $EXAMPLES_DIR"
-    echo "Verbose Mode:    $VERBOSE"
-    echo "Dry Run Mode:    $DRY_RUN"
+    echo "Namespace:           $NAMESPACE"
+    echo "Examples Dir:        $EXAMPLES_DIR"
+    echo "Verbose Mode:        $VERBOSE"
+    echo "Dry Run Mode:        $DRY_RUN"
+    echo "Programmatic Only:   $PROGRAMMATIC_ONLY"
+    echo "Representative Mode: $REPRESENTATIVE_MODE"
     if [[ -n "$CATEGORY_FILTER" ]]; then
-        echo "Category Filter: $CATEGORY_FILTER"
+        echo "Category Filter:     $CATEGORY_FILTER"
+    elif [[ "$REPRESENTATIVE_MODE" == "true" ]]; then
+        echo "Category Filter:     (6 representative tests)"
     else
-        echo "Category Filter: (all categories)"
+        echo "Category Filter:     (all categories)"
     fi
     echo ""
 
@@ -1271,9 +1629,18 @@ main() {
     local start_time
     start_time=$(date +%s)
 
-    # Run tests based on category filter
-    if [[ -z "$CATEGORY_FILTER" ]]; then
-        # Run all tests (24 total)
+    # Run tests based on category filter and representative mode
+    if [[ "$REPRESENTATIVE_MODE" == "true" ]]; then
+        # Run 6 representative tests covering all categories
+        log_info "Running representative mode (6 tests: K01:0, K02:2, K03:0, K06:0, K07:2, K08:0)"
+        run_k01_tests  # Will run only K01:0
+        run_k02_tests  # Will run only K02:2
+        run_k03_tests  # Will run only K03:0
+        run_k06_tests  # Will run only K06:0
+        run_k07_tests  # Will run only K07:2
+        run_k08_tests  # Will run only K08:0
+    elif [[ -z "$CATEGORY_FILTER" ]]; then
+        # Run all tests (22 total)
         run_k01_tests
         run_k02_tests
         run_k03_tests

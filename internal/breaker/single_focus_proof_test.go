@@ -66,7 +66,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K07_Single_Network_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK07ToStack(appStack, target, namespace, nil)
+			err := applyK07ToStack(&appStack, target, namespace, nil)
 			if err != nil {
 				t.Fatalf("K07 iteration %d failed: %v", i, err)
 			}
@@ -124,7 +124,7 @@ func TestRandomizationWorks(t *testing.T) {
 		}},
 		{"K07", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK07ToStack(appStack, target, namespace, nil)
+			return applyK07ToStack(&appStack, target, namespace, nil)
 		}},
 		{"K08", func() error {
 			appStack := baseline.GetAppStack(namespace)

@@ -4,4 +4,4 @@ metadata:
   name: test-lab
 spec:
   vulnerability: K08
-  subIssue: 2  # Insecure volume permissions
+  subIssue: 2  # Insecure secret volume permissions (0644)

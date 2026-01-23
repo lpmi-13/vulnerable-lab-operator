@@ -43,5 +43,214 @@
             }
         ],
         "posturePolicies": [{ "controlID": "C-0053" }]
+    },
+    {
+        "name": "exclude-kube-system-namespace",
+        "policyType": "postureExceptionPolicy",
+        "resources": [
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system"
+                }
+            }
+        ],
+        "posturePolicies": [
+            { "controlID": "*" }
+        ]
+    },
+    {
+        "name": "exclude-k3s-infrastructure-pods",
+        "policyType": "postureExceptionPolicy",
+        "resources": [
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "Pod",
+                    "name": "etcd-*"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "Pod",
+                    "name": "kube-apiserver-*"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "Pod",
+                    "name": "kube-controller-manager-*"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "Pod",
+                    "name": "kube-scheduler-*"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "Pod",
+                    "name": "kube-proxy-*"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "DaemonSet",
+                    "name": "svclb-*"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "Deployment",
+                    "name": "coredns"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "Deployment",
+                    "name": "local-path-provisioner"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "Deployment",
+                    "name": "metrics-server"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "Deployment",
+                    "name": "traefik"
+                }
+            }
+        ],
+        "posturePolicies": [
+            { "controlID": "C-0013" },
+            { "controlID": "C-0016" },
+            { "controlID": "C-0017" },
+            { "controlID": "C-0034" },
+            { "controlID": "C-0046" },
+            { "controlID": "C-0057" }
+        ]
+    },
+    {
+        "name": "exclude-k3s-service-accounts",
+        "policyType": "postureExceptionPolicy",
+        "resources": [
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "ServiceAccount",
+                    "name": "default"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "ServiceAccount",
+                    "name": "traefik"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "ServiceAccount",
+                    "name": "coredns"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "ServiceAccount",
+                    "name": "local-path-provisioner-service-account"
+                }
+            }
+        ],
+        "posturePolicies": [{ "controlID": "C-0034" }]
+    },
+    {
+        "name": "exclude-k3s-rbac",
+        "policyType": "postureExceptionPolicy",
+        "resources": [
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "Role"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "RoleBinding"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "kind": "ClusterRole"
+                }
+            },
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "kind": "ClusterRoleBinding"
+                }
+            }
+        ],
+        "posturePolicies": [{ "controlID": "C-0053" }]
+    },
+    {
+        "name": "exclude-k3s-network-policies",
+        "policyType": "postureExceptionPolicy",
+        "resources": [
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "NetworkPolicy"
+                }
+            }
+        ],
+        "posturePolicies": [{ "controlID": "C-0260" }]
+    },
+    {
+        "name": "exclude-k3s-host-network-usage",
+        "policyType": "postureExceptionPolicy",
+        "resources": [
+            {
+                "designatorType": "Attributes",
+                "attributes": {
+                    "namespace": "kube-system",
+                    "kind": "Pod"
+                }
+            }
+        ],
+        "posturePolicies": [{ "controlID": "C-0041" }]
     }
 ]
