@@ -5,27 +5,43 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"os/exec"
+	"sync"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/lpmi-13/vulnerable-lab-operator/api/v1alpha1"
 	"github.com/lpmi-13/vulnerable-lab-operator/internal/baseline"
 	"github.com/lpmi-13/vulnerable-lab-operator/internal/breaker"
 )
 
+// notificationState tracks the last notification sent for a lab
+type notificationState struct {
+	lastMessage string
+	lastTime    time.Time
+}
+
 // VulnerableLabReconciler reconciles a VulnerableLab object
 type VulnerableLabReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// Deduplication state for notifications
+	lastNotified     map[string]*notificationState
+	initialSetupSent map[string]bool
+	watchTriggered   map[string]bool
+	mu               sync.Mutex
 }
 
 // +kubebuilder:rbac:groups=lab.security.lab,resources=vulnerablelabs,verbs=get;list;watch;create;update;patch;delete
@@ -89,6 +105,19 @@ func (r *VulnerableLabReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alpha1.VulnerableLab, namespace string) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Initializing new lab environment", "namespace", namespace)
+
+	// Send initial setup message once per namespace
+	r.mu.Lock()
+	if r.initialSetupSent == nil {
+		r.initialSetupSent = make(map[string]bool)
+	}
+	if !r.initialSetupSent[namespace] {
+		r.mu.Unlock()
+		r.writeClusterStatusDedup("Initial cluster setup in progress, please wait...", namespace)
+		r.mu.Lock()
+		r.initialSetupSent[namespace] = true
+	}
+	r.mu.Unlock()
 
 	// Choose vulnerability type based on spec or randomly
 	// This logic implements three different persistence behaviors across remediation cycles:
@@ -191,9 +220,9 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	logger.Info("Lab initialization complete", "vulnerability", chosenVuln, "target", targetDeployment)
 
 	// Update cluster status file for user visibility
-	r.writeClusterStatus("Ready for scanning")
+	r.writeClusterStatusDedup("Ready for scanning", namespace)
 
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 }
 
 func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1alpha1.VulnerableLab, namespace string) (ctrl.Result, error) {
@@ -212,8 +241,18 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 	}
 
 	if !isFixed {
+		// Check if this was triggered by a watch event (user made a change)
+		r.mu.Lock()
+		wasWatchTriggered := r.watchTriggered[namespace]
+		r.watchTriggered[namespace] = false // Clear the flag
+		r.mu.Unlock()
+
+		if wasWatchTriggered {
+			r.writeClusterStatusDedup("Change detected, but the vulnerability is still present. Keep trying!", namespace)
+		}
+
 		logger.Info("Vulnerability not yet remediated", "target", lab.Status.TargetResource)
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 	}
 
 	// Vulnerability fixed - transition to remediated state
@@ -226,7 +265,7 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 	}
 
 	// Write status to file for terminal visibility
-	r.writeClusterStatus("Vulnerability fixed! Preparing next challenge...")
+	r.writeClusterStatusDedup("Vulnerability fixed! Preparing next challenge...", namespace)
 	logger.Info("Vulnerability remediated, will reset on next reconciliation", "target", lab.Status.TargetResource)
 	return ctrl.Result{Requeue: true}, nil
 }
@@ -236,7 +275,7 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 	logger.Info("Resetting lab", "namespace", namespace)
 
 	// Update cluster status file for user visibility
-	r.writeClusterStatus("Resetting cluster")
+	r.writeClusterStatusDedup("Resetting cluster", namespace)
 
 	// Check if the namespace exists
 	var ns corev1.Namespace
@@ -306,9 +345,6 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 
 	logger.Info("Lab reset complete, will initialize new challenge")
 
-	// Update cluster status file - reset complete means ready for next scan
-	r.writeClusterStatus("Ready for scanning")
-
 	return ctrl.Result{Requeue: true}, nil
 }
 
@@ -321,21 +357,37 @@ func (r *VulnerableLabReconciler) selectRandomIndex(arrayLength int) int {
 	return localRand.Intn(arrayLength)
 }
 
-// writeClusterStatus writes a simple status message to /tmp/cluster-status for user visibility
-// and broadcasts to all terminals via wall for immediate notification
-func (r *VulnerableLabReconciler) writeClusterStatus(status string) {
+// writeClusterStatusDedup writes a status message to /tmp/cluster-status with deduplication
+// Only sends notification if the message has changed or enough time has passed
+func (r *VulnerableLabReconciler) writeClusterStatusDedup(status string, labName string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Initialize the map if needed
+	if r.lastNotified == nil {
+		r.lastNotified = make(map[string]*notificationState)
+	}
+
+	// Check if we should send the notification
+	now := time.Now()
+	if state, exists := r.lastNotified[labName]; exists {
+		// Skip if same message and sent within last 5 seconds
+		if state.lastMessage == status && now.Sub(state.lastTime) < 5*time.Second {
+			return
+		}
+	}
+
+	// Update the state
+	r.lastNotified[labName] = &notificationState{
+		lastMessage: status,
+		lastTime:    now,
+	}
+
 	// Write to file for programmatic access
 	err := os.WriteFile("/tmp/cluster-status", []byte(status), 0644)
 	if err != nil {
 		// Log error but don't fail reconciliation
 		ctrl.Log.WithName("status-file").Error(err, "Failed to write cluster status file")
-	}
-
-	// Broadcast to all terminals via wall for immediate user notification
-	cmd := exec.Command("wall", status)
-	if err := cmd.Run(); err != nil {
-		// Log error but don't fail reconciliation - wall may not be available in all environments
-		ctrl.Log.WithName("wall").Error(err, "Failed to broadcast status via wall")
 	}
 }
 
@@ -423,9 +475,63 @@ func (r *VulnerableLabReconciler) updateStatusWithRetry(ctx context.Context, lab
 	})
 }
 
+// mapResourceToLab maps watched resources back to their VulnerableLab
+func (r *VulnerableLabReconciler) mapResourceToLab(ctx context.Context, obj client.Object) []reconcile.Request {
+	// Get the namespace name, which should match the VulnerableLab name
+	namespace := obj.GetNamespace()
+	if namespace == "" {
+		return nil
+	}
+
+	r.mu.Lock()
+	if r.watchTriggered == nil {
+		r.watchTriggered = make(map[string]bool)
+	}
+	r.watchTriggered[namespace] = true
+	r.mu.Unlock()
+
+	// The VulnerableLab is in the default namespace with the same name as the target namespace
+	return []reconcile.Request{
+		{
+			NamespacedName: types.NamespacedName{
+				Name:      namespace,
+				Namespace: "default",
+			},
+		},
+	}
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *VulnerableLabReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.VulnerableLab{}).
+		Watches(
+			&appsv1.Deployment{},
+			handler.EnqueueRequestsFromMapFunc(r.mapResourceToLab),
+		).
+		Watches(
+			&rbacv1.Role{},
+			handler.EnqueueRequestsFromMapFunc(r.mapResourceToLab),
+		).
+		Watches(
+			&rbacv1.RoleBinding{},
+			handler.EnqueueRequestsFromMapFunc(r.mapResourceToLab),
+		).
+		Watches(
+			&corev1.Service{},
+			handler.EnqueueRequestsFromMapFunc(r.mapResourceToLab),
+		).
+		Watches(
+			&networkingv1.NetworkPolicy{},
+			handler.EnqueueRequestsFromMapFunc(r.mapResourceToLab),
+		).
+		Watches(
+			&corev1.ConfigMap{},
+			handler.EnqueueRequestsFromMapFunc(r.mapResourceToLab),
+		).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.mapResourceToLab),
+		).
 		Complete(r)
 }
