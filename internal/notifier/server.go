@@ -99,6 +99,38 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
     <script>
         const statusDiv = document.getElementById('status');
         const notificationsDiv = document.getElementById('notifications');
+        const originalTitle = document.title;
+        let titleFlashInterval = null;
+
+        // Request notification permission on page load
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+
+        // Title flashing function
+        function startTitleFlash(message) {
+            if (titleFlashInterval) return; // Already flashing
+            let showingAlert = true;
+            titleFlashInterval = setInterval(() => {
+                document.title = showingAlert ? '(*) New Notification' : originalTitle;
+                showingAlert = !showingAlert;
+            }, 1000);
+        }
+
+        function stopTitleFlash() {
+            if (titleFlashInterval) {
+                clearInterval(titleFlashInterval);
+                titleFlashInterval = null;
+                document.title = originalTitle;
+            }
+        }
+
+        // Stop flashing when tab regains focus
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                stopTitleFlash();
+            }
+        });
 
         const eventSource = new EventSource('/events');
 
@@ -129,6 +161,24 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
             // Keep only last 50 notifications
             while (notificationsDiv.children.length > 50) {
                 notificationsDiv.removeChild(notificationsDiv.lastChild);
+            }
+
+            // Background tab notifications
+            if (document.hidden) {
+                // Browser notification popup
+                if ('Notification' in window && Notification.permission === 'granted') {
+                    const n = new Notification('Cluster Notification', {
+                        body: event.data,
+                        icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y="75" font-size="75">🔔</text></svg>'
+                    });
+                    n.onclick = () => {
+                        window.focus();
+                        n.close();
+                    };
+                }
+
+                // Title flashing
+                startTitleFlash(event.data);
             }
         };
 
