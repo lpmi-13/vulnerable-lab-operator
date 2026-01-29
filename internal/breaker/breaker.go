@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -35,7 +34,7 @@ const (
 )
 
 // BreakCluster applies the specified vulnerability to the cluster using build-with-vulnerabilities approach
-func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, targetResource, namespace string, subIssue *int) error {
+func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, targetResource, namespace string, subIssue *int, rng *rand.Rand) error {
 	logger := log.FromContext(ctx)
 
 	logger.Info("Applying vulnerability", "vulnerability", vulnerabilityID, "namespace", namespace)
@@ -51,7 +50,7 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 	// Apply the vulnerability to the target resource within the stack before deployment
 	switch vulnerabilityID {
 	case "K01":
-		if err := applyK01ToStack(appStack, targetResource, subIssue); err != nil {
+		if err := applyK01ToStack(appStack, targetResource, subIssue, rng); err != nil {
 			return fmt.Errorf("failed to apply K01 vulnerability: %w", err)
 		}
 	case "K02":
@@ -59,22 +58,22 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 			return fmt.Errorf("failed to apply K02 vulnerability: %w", err)
 		}
 	case "K03":
-		if err := applyK03ToStack(&appStack, targetResource, namespace, subIssue); err != nil {
+		if err := applyK03ToStack(&appStack, targetResource, namespace, subIssue, rng); err != nil {
 			return fmt.Errorf("failed to apply K03 vulnerability: %w", err)
 		}
 	// K04 (Lack of Centralized Policy Enforcement) and K05 (Inadequate Logging and Monitoring)
 	// are not implemented as they require external infrastructure (OPA Gatekeeper, SIEM systems)
 	// rather than resource-level misconfigurations that can be demonstrated in this lab environment
 	case "K06":
-		if err := applyK06ToStack(appStack, targetResource, subIssue); err != nil {
+		if err := applyK06ToStack(appStack, targetResource, subIssue, rng); err != nil {
 			return fmt.Errorf("failed to apply K06 vulnerability: %w", err)
 		}
 	case "K07":
-		if err := applyK07ToStack(&appStack, targetResource, namespace, subIssue); err != nil {
+		if err := applyK07ToStack(&appStack, targetResource, namespace, subIssue, rng); err != nil {
 			return fmt.Errorf("failed to apply K07 vulnerability: %w", err)
 		}
 	case "K08":
-		if err := applyK08ToStack(&appStack, targetResource, namespace, subIssue); err != nil {
+		if err := applyK08ToStack(&appStack, targetResource, namespace, subIssue, rng); err != nil {
 			return fmt.Errorf("failed to apply K08 vulnerability: %w", err)
 		}
 	// K09 (Misconfigured Cluster Components) and K10 (Outdated and Vulnerable Kubernetes Components)
@@ -88,7 +87,17 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 	for _, obj := range appStack {
 		if err := c.Create(ctx, obj); err != nil {
 			if errors.IsAlreadyExists(err) {
-				// Skip already existing resources for idempotency
+				// Resource exists — update it with the vulnerable spec
+				// Fetch the existing resource to get its resourceVersion
+				existing := obj.DeepCopyObject().(client.Object)
+				if err := c.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
+					return fmt.Errorf("failed to get existing resource %s: %w", obj.GetName(), err)
+				}
+				// Copy resourceVersion to our modified object
+				obj.SetResourceVersion(existing.GetResourceVersion())
+				if err := c.Update(ctx, obj); err != nil {
+					return fmt.Errorf("failed to update existing resource %s: %w", obj.GetName(), err)
+				}
 				continue
 			}
 			return fmt.Errorf("failed to create resource %s: %w", obj.GetName(), err)
@@ -120,7 +129,7 @@ func createNamespaceIfNotExists(ctx context.Context, c client.Client, namespace 
 // InitializeLab function is no longer used - replaced by BreakCluster with build-with-vulnerabilities approach
 
 // applyK01ToStack modifies the baseline stack to apply insecure workload configurations
-func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue *int) error {
+func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue *int, rng *rand.Rand) error {
 	// Find and modify the target deployment within the stack
 	for _, obj := range appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
@@ -135,8 +144,7 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 				vulnType = *subIssue
 			} else {
 				// Randomly choose one of three K01 vulnerability types
-				localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
-				vulnType = localRand.Intn(3)
+				vulnType = rng.Intn(3)
 			}
 
 			switch vulnType {
@@ -247,7 +255,7 @@ func applyK02ToStack(appStack []client.Object, targetDeployment string, subIssue
 }
 
 // applyK03ToStack modifies the baseline stack to apply overly permissive RBAC configurations
-func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int) error {
+func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) error {
 	// Find and modify the target deployment within the stack
 	for _, obj := range *appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
@@ -260,8 +268,7 @@ func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 				vulnType = *subIssue
 			} else {
 				// Randomly choose one of three K03 vulnerability types (all namespace-scoped)
-				localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
-				vulnType = localRand.Intn(3)
+				vulnType = rng.Intn(3)
 			}
 
 			switch vulnType {
@@ -476,7 +483,7 @@ func createExcessiveSecretsRBAC(appStack *[]client.Object, namespace string) err
 }
 
 // applyK06ToStack modifies the baseline stack to apply broken authentication vulnerabilities
-func applyK06ToStack(appStack []client.Object, targetDeployment string, subIssue *int) error {
+func applyK06ToStack(appStack []client.Object, targetDeployment string, subIssue *int, rng *rand.Rand) error {
 	// Find and modify the target deployment within the stack
 	for _, obj := range appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
@@ -489,8 +496,7 @@ func applyK06ToStack(appStack []client.Object, targetDeployment string, subIssue
 				vulnType = *subIssue
 			} else {
 				// Randomly choose one of five K06 vulnerability types (removed duplicate K06:2)
-				localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
-				vulnType = localRand.Intn(5)
+				vulnType = rng.Intn(5)
 			}
 
 			switch vulnType {
@@ -531,7 +537,7 @@ func applyK06ToStack(appStack []client.Object, targetDeployment string, subIssue
 }
 
 // applyK07ToStack modifies the baseline stack to demonstrate missing network segmentation controls
-func applyK07ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int) error {
+func applyK07ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) error {
 	// K07 vulnerabilities are about MISSING network controls rather than broken ones
 	// We demonstrate this by either disabling network policies or exposing services externally
 	// Note: targetDeployment parameter kept for API consistency with other vulnerability functions
@@ -546,8 +552,7 @@ func applyK07ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 		vulnType = *subIssue
 	} else {
 		// Randomly choose one of four K07 vulnerability demonstrations
-		localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
-		vulnType = localRand.Intn(4)
+		vulnType = rng.Intn(4)
 	}
 
 	switch vulnType {
@@ -650,7 +655,7 @@ func exposePostgresServiceAsNodePort(appStack *[]client.Object) error {
 }
 
 // applyK08ToStack modifies the baseline stack to apply secrets management vulnerabilities
-func applyK08ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int) error {
+func applyK08ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) error {
 	// Choose vulnerability type based on subIssue parameter or randomly
 	var vulnType int
 	if subIssue != nil {
@@ -660,8 +665,7 @@ func applyK08ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 		vulnType = *subIssue
 	} else {
 		// Randomly choose one of three K08 vulnerability types
-		localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
-		vulnType = localRand.Intn(3)
+		vulnType = rng.Intn(3)
 	}
 
 	switch vulnType {

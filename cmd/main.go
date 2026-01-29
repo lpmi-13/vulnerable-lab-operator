@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -39,6 +40,7 @@ import (
 
 	labv1alpha1 "github.com/lpmi-13/vulnerable-lab-operator/api/v1alpha1"
 	"github.com/lpmi-13/vulnerable-lab-operator/internal/controller"
+	"github.com/lpmi-13/vulnerable-lab-operator/internal/notifier"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -63,6 +65,8 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var enableNotifications bool
+	var notificationPort int
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -81,6 +85,10 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.BoolVar(&enableNotifications, "enable-notifications", true,
+		"Enable browser notifications via SSE server")
+	flag.IntVar(&notificationPort, "notification-port", 8888,
+		"Port for the notification SSE server")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -202,9 +210,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Set up notification system if enabled
+	var n *notifier.Notifier
+	if enableNotifications {
+		n = notifier.New()
+		server := notifier.NewServer(n, notificationPort)
+		if err := mgr.Add(server); err != nil {
+			setupLog.Error(err, "unable to add notification server to manager")
+			os.Exit(1)
+		}
+		setupLog.Info("Notification server enabled", "url", fmt.Sprintf("http://localhost:%d", notificationPort))
+	} else {
+		setupLog.Info("Notification server disabled")
+	}
+
 	if err := (&controller.VulnerableLabReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Notifier: n,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "VulnerableLab")
 		os.Exit(1)

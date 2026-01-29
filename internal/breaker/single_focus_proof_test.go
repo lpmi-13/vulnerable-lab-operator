@@ -1,7 +1,9 @@
 package breaker
 
 import (
+	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/lpmi-13/vulnerable-lab-operator/internal/baseline"
 )
@@ -11,6 +13,7 @@ import (
 func TestSingleFocusProof(t *testing.T) {
 	namespace := "test-single-focus"
 	target := apiDeploymentName
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	t.Log("=== Testing Single-Focus Vulnerability Application ===")
 
@@ -18,7 +21,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K01_Single_Security_Context_Change", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK01ToStack(appStack, target, nil)
+			err := applyK01ToStack(appStack, target, nil, rng)
 			if err != nil {
 				t.Fatalf("K01 iteration %d failed: %v", i, err)
 			}
@@ -42,7 +45,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K03_Single_RBAC_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK03ToStack(&appStack, target, namespace, nil)
+			err := applyK03ToStack(&appStack, target, namespace, nil, rng)
 			if err != nil {
 				t.Fatalf("K03 iteration %d failed: %v", i, err)
 			}
@@ -54,7 +57,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K06_Single_Auth_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK06ToStack(appStack, target, nil)
+			err := applyK06ToStack(appStack, target, nil, rng)
 			if err != nil {
 				t.Fatalf("K06 iteration %d failed: %v", i, err)
 			}
@@ -66,7 +69,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K07_Single_Network_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK07ToStack(&appStack, target, namespace, nil)
+			err := applyK07ToStack(&appStack, target, namespace, nil, rng)
 			if err != nil {
 				t.Fatalf("K07 iteration %d failed: %v", i, err)
 			}
@@ -78,7 +81,7 @@ func TestSingleFocusProof(t *testing.T) {
 	t.Run("K08_Single_Secrets_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			err := applyK08ToStack(&appStack, target, namespace, nil)
+			err := applyK08ToStack(&appStack, target, namespace, nil, rng)
 			if err != nil {
 				t.Fatalf("K08 iteration %d failed: %v", i, err)
 			}
@@ -96,6 +99,7 @@ func TestSingleFocusProof(t *testing.T) {
 func TestRandomizationWorks(t *testing.T) {
 	namespace := "test-randomization"
 	target := apiDeploymentName
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	t.Log("=== Testing Randomization Within Categories ===")
 
@@ -108,7 +112,7 @@ func TestRandomizationWorks(t *testing.T) {
 	}{
 		{"K01", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK01ToStack(appStack, target, nil)
+			return applyK01ToStack(appStack, target, nil, rng)
 		}},
 		{"K02", func() error {
 			appStack := baseline.GetAppStack(namespace)
@@ -116,19 +120,19 @@ func TestRandomizationWorks(t *testing.T) {
 		}},
 		{"K03", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK03ToStack(&appStack, target, namespace, nil)
+			return applyK03ToStack(&appStack, target, namespace, nil, rng)
 		}},
 		{"K06", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK06ToStack(appStack, target, nil)
+			return applyK06ToStack(appStack, target, nil, rng)
 		}},
 		{"K07", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK07ToStack(&appStack, target, namespace, nil)
+			return applyK07ToStack(&appStack, target, namespace, nil, rng)
 		}},
 		{"K08", func() error {
 			appStack := baseline.GetAppStack(namespace)
-			return applyK08ToStack(&appStack, target, namespace, nil)
+			return applyK08ToStack(&appStack, target, namespace, nil, rng)
 		}},
 	}
 

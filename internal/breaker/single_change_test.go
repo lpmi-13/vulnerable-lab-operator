@@ -1,7 +1,9 @@
 package breaker
 
 import (
+	"math/rand"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -16,6 +18,7 @@ import (
 
 func TestK01MakesFocusedChanges(t *testing.T) {
 	namespace := "test-k01-focused"
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	for i := 0; i < 20; i++ {
 		appStack := baseline.GetAppStack(namespace)
@@ -33,7 +36,7 @@ func TestK01MakesFocusedChanges(t *testing.T) {
 			t.Fatal("Could not find api deployment in baseline stack")
 		}
 
-		err := applyK01ToStack(appStack, "api", nil)
+		err := applyK01ToStack(appStack, "api", nil, rng)
 		if err != nil {
 			t.Fatalf("applyK01ToStack failed: %v", err)
 		}
@@ -165,12 +168,13 @@ func TestK02MakesFocusedChanges(t *testing.T) {
 
 func TestK03MakesFocusedChanges(t *testing.T) {
 	namespace := "test-k03-focused"
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	for i := 0; i < 20; i++ {
 		appStack := baseline.GetAppStack(namespace)
 		originalStackSize := len(appStack)
 
-		err := applyK03ToStack(&appStack, "api", namespace, nil)
+		err := applyK03ToStack(&appStack, "api", namespace, nil, rng)
 		if err != nil {
 			t.Fatalf("applyK03ToStack failed: %v", err)
 		}
@@ -209,6 +213,7 @@ func TestK03MakesFocusedChanges(t *testing.T) {
 //nolint:gocyclo // Test function needs to check multiple vulnerability types
 func TestK06MakesFocusedChanges(t *testing.T) {
 	namespace := "test-k06-focused"
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	for i := 0; i < 20; i++ {
 		appStack := baseline.GetAppStack(namespace)
@@ -226,7 +231,7 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 			t.Fatal("Could not find api deployment in baseline stack")
 		}
 
-		err := applyK06ToStack(appStack, "api", nil)
+		err := applyK06ToStack(appStack, "api", nil, rng)
 		if err != nil {
 			t.Fatalf("applyK06ToStack failed: %v", err)
 		}
@@ -322,6 +327,7 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 
 func TestK07MakesFocusedChanges(t *testing.T) {
 	namespace := "test-k07-focused"
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	for i := 0; i < 20; i++ {
 		appStack := baseline.GetAppStack(namespace)
@@ -345,7 +351,7 @@ func TestK07MakesFocusedChanges(t *testing.T) {
 			t.Fatal("Could not find postgres-service in baseline stack")
 		}
 
-		err := applyK07ToStack(&appStack, "api", namespace, nil)
+		err := applyK07ToStack(&appStack, "api", namespace, nil, rng)
 		if err != nil {
 			t.Fatalf("applyK07ToStack failed: %v", err)
 		}
@@ -409,6 +415,7 @@ func TestK07MakesFocusedChanges(t *testing.T) {
 
 func TestK08MakesFocusedChanges(t *testing.T) {
 	namespace := "test-k08-focused"
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	for i := 0; i < 20; i++ {
 		appStack := baseline.GetAppStack(namespace)
@@ -427,7 +434,7 @@ func TestK08MakesFocusedChanges(t *testing.T) {
 			t.Fatal("Could not find api deployment in baseline stack")
 		}
 
-		err := applyK08ToStack(&appStack, "api", namespace, nil)
+		err := applyK08ToStack(&appStack, "api", namespace, nil, rng)
 		if err != nil {
 			t.Fatalf("applyK08ToStack failed: %v", err)
 		}
@@ -500,6 +507,7 @@ func TestK08MakesFocusedChanges(t *testing.T) {
 func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 	namespace := "test-success"
 	targets := []string{"api", "webapp", "user-service"}
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	for _, target := range targets {
 		// Test each vulnerability type
@@ -507,9 +515,9 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 			name string
 			fn   func([]client.Object, string) error
 		}{
-			{"K01", func(stack []client.Object, t string) error { return applyK01ToStack(stack, t, nil) }},
+			{"K01", func(stack []client.Object, t string) error { return applyK01ToStack(stack, t, nil, rng) }},
 			{"K02", func(stack []client.Object, t string) error { return applyK02ToStack(stack, t, nil) }},
-			{"K06", func(stack []client.Object, t string) error { return applyK06ToStack(stack, t, nil) }},
+			{"K06", func(stack []client.Object, t string) error { return applyK06ToStack(stack, t, nil, rng) }},
 		}
 
 		for _, vuln := range vulnerabilities {
@@ -525,8 +533,12 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 			name string
 			fn   func(*[]client.Object, string, string) error
 		}{
-			{"K03", func(stack *[]client.Object, target, ns string) error { return applyK03ToStack(stack, target, ns, nil) }},
-			{"K08", func(stack *[]client.Object, target, ns string) error { return applyK08ToStack(stack, target, ns, nil) }},
+			{"K03", func(stack *[]client.Object, target, ns string) error {
+				return applyK03ToStack(stack, target, ns, nil, rng)
+			}},
+			{"K08", func(stack *[]client.Object, target, ns string) error {
+				return applyK08ToStack(stack, target, ns, nil, rng)
+			}},
 		}
 
 		// K07 doesn't add resources, so it uses the original signature
@@ -534,7 +546,9 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 			name string
 			fn   func(*[]client.Object, string, string) error
 		}{
-			{"K07", func(stack *[]client.Object, target, ns string) error { return applyK07ToStack(stack, target, ns, nil) }},
+			{"K07", func(stack *[]client.Object, target, ns string) error {
+				return applyK07ToStack(stack, target, ns, nil, rng)
+			}},
 		}
 
 		for _, vuln := range namespacedVulns {

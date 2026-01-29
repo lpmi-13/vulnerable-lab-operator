@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"os"
 	"sync"
 	"time"
 
@@ -25,23 +24,21 @@ import (
 	"github.com/lpmi-13/vulnerable-lab-operator/api/v1alpha1"
 	"github.com/lpmi-13/vulnerable-lab-operator/internal/baseline"
 	"github.com/lpmi-13/vulnerable-lab-operator/internal/breaker"
+	"github.com/lpmi-13/vulnerable-lab-operator/internal/notifier"
 )
-
-// notificationState tracks the last notification sent for a lab
-type notificationState struct {
-	lastMessage string
-	lastTime    time.Time
-}
 
 // VulnerableLabReconciler reconciles a VulnerableLab object
 type VulnerableLabReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	// Deduplication state for notifications
-	lastNotified     map[string]*notificationState
-	initialSetupSent map[string]bool
+	Scheme   *runtime.Scheme
+	Notifier *notifier.Notifier
+	// State tracking
 	watchTriggered   map[string]bool
+	initialSetupSent map[string]bool
+	vulnerableSince  map[string]time.Time
 	mu               sync.Mutex
+	// Random number generator for vulnerability selection
+	rng *rand.Rand
 }
 
 // +kubebuilder:rbac:groups=lab.security.lab,resources=vulnerablelabs,verbs=get;list;watch;create;update;patch;delete
@@ -113,7 +110,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	}
 	if !r.initialSetupSent[namespace] {
 		r.mu.Unlock()
-		r.writeClusterStatusDedup("Initial cluster setup in progress, please wait...", namespace)
+		r.Notifier.Send(namespace, "Initial cluster setup in progress, please wait...")
 		r.mu.Lock()
 		r.initialSetupSent[namespace] = true
 	}
@@ -185,7 +182,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	targetDeployment := viableTargets[targetIndex]
 
 	// Use BreakCluster instead of InitializeLab
-	if err := breaker.BreakCluster(ctx, r.Client, chosenVuln, targetDeployment, namespace, lab.Spec.SubIssue); err != nil {
+	if err := breaker.BreakCluster(ctx, r.Client, chosenVuln, targetDeployment, namespace, lab.Spec.SubIssue, r.rng); err != nil {
 		logger.Error(err, "Failed to apply vulnerability")
 
 		// Get the latest version of the resource before updating
@@ -217,10 +214,18 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 		return ctrl.Result{}, err
 	}
 
+	// Record timestamp when entering StateVulnerable for grace period
+	r.mu.Lock()
+	if r.vulnerableSince == nil {
+		r.vulnerableSince = make(map[string]time.Time)
+	}
+	r.vulnerableSince[namespace] = time.Now()
+	r.mu.Unlock()
+
 	logger.Info("Lab initialization complete", "vulnerability", chosenVuln, "target", targetDeployment)
 
-	// Update cluster status file for user visibility
-	r.writeClusterStatusDedup("Ready for scanning", namespace)
+	// Send notification
+	r.Notifier.Send(namespace, "Ready for scanning")
 
 	return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 }
@@ -229,9 +234,42 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 	logger := log.FromContext(ctx)
 	logger.Info("Checking if vulnerability has been remediated", "vulnerability", lab.Status.ChosenVulnerability, "target", lab.Status.TargetResource)
 
+	// Grace period: skip remediation checks for 5 seconds after entering StateVulnerable
+	// This prevents false positives during initialization when cache propagation is incomplete
+	r.mu.Lock()
+	vulnTime, hasTimestamp := r.vulnerableSince[namespace]
+	r.mu.Unlock()
+
+	if hasTimestamp {
+		elapsed := time.Since(vulnTime)
+		if elapsed < 5*time.Second {
+			logger.Info("Grace period active, skipping remediation check", "elapsed", elapsed.String(), "remaining", (5*time.Second - elapsed).String())
+			return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+		}
+		// Grace period elapsed, clear the entry
+		r.mu.Lock()
+		delete(r.vulnerableSince, namespace)
+		// Clear any watch-triggered flags accumulated during initialization
+		// (operator's own Create/Update calls trigger watches that aren't user changes)
+		r.watchTriggered[namespace] = false
+		r.mu.Unlock()
+	}
+
 	// For K03 vulnerabilities, check for partial deletions and clean up
 	if lab.Status.ChosenVulnerability == "K03" {
 		r.cleanupOrphanedK03Resources(ctx, namespace)
+	}
+
+	// Guard: verify the target deployment exists before checking remediation.
+	// On startup, resources may not exist yet (previous run cleaned up, or still being created).
+	// CheckRemediation treats "not found" as "fixed", which would be a false positive.
+	targetDep := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Name: lab.Status.TargetResource, Namespace: namespace}, targetDep); err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Target deployment not found yet, resources may still be initializing", "target", lab.Status.TargetResource)
+			return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+		}
+		return ctrl.Result{}, err
 	}
 
 	isFixed, err := breaker.CheckRemediation(ctx, r.Client, lab.Status.ChosenVulnerability, lab.Status.TargetResource, namespace)
@@ -247,8 +285,9 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 		r.watchTriggered[namespace] = false // Clear the flag
 		r.mu.Unlock()
 
+		// Send change notification with 30-second cooldown
 		if wasWatchTriggered {
-			r.writeClusterStatusDedup("Change detected, but the vulnerability is still present. Keep trying!", namespace)
+			r.Notifier.SendChange(namespace, "Change detected, but the vulnerability is still present. Keep trying!")
 		}
 
 		logger.Info("Vulnerability not yet remediated", "target", lab.Status.TargetResource)
@@ -264,8 +303,8 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 		return ctrl.Result{}, err
 	}
 
-	// Write status to file for terminal visibility
-	r.writeClusterStatusDedup("Vulnerability fixed! Preparing next challenge...", namespace)
+	// Send notification
+	r.Notifier.Send(namespace, "Vulnerability fixed! Preparing next challenge...")
 	logger.Info("Vulnerability remediated, will reset on next reconciliation", "target", lab.Status.TargetResource)
 	return ctrl.Result{Requeue: true}, nil
 }
@@ -274,8 +313,8 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 	logger := log.FromContext(ctx)
 	logger.Info("Resetting lab", "namespace", namespace)
 
-	// Update cluster status file for user visibility
-	r.writeClusterStatusDedup("Resetting cluster", namespace)
+	// Send notification
+	r.Notifier.Send(namespace, "Resetting cluster")
 
 	// Check if the namespace exists
 	var ns corev1.Namespace
@@ -350,45 +389,8 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 
 // we want a new random index on every reset
 func (r *VulnerableLabReconciler) selectRandomIndex(arrayLength int) int {
-	// Use current nanoseconds as seed for true randomness across cycles
-	now := time.Now().UnixNano()
-	// Create a simple pseudo-random generator
-	localRand := rand.New(rand.NewSource(now))
-	return localRand.Intn(arrayLength)
-}
-
-// writeClusterStatusDedup writes a status message to /tmp/cluster-status with deduplication
-// Only sends notification if the message has changed or enough time has passed
-func (r *VulnerableLabReconciler) writeClusterStatusDedup(status string, labName string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// Initialize the map if needed
-	if r.lastNotified == nil {
-		r.lastNotified = make(map[string]*notificationState)
-	}
-
-	// Check if we should send the notification
-	now := time.Now()
-	if state, exists := r.lastNotified[labName]; exists {
-		// Skip if same message and sent within last 5 seconds
-		if state.lastMessage == status && now.Sub(state.lastTime) < 5*time.Second {
-			return
-		}
-	}
-
-	// Update the state
-	r.lastNotified[labName] = &notificationState{
-		lastMessage: status,
-		lastTime:    now,
-	}
-
-	// Write to file for programmatic access
-	err := os.WriteFile("/tmp/cluster-status", []byte(status), 0644)
-	if err != nil {
-		// Log error but don't fail reconciliation
-		ctrl.Log.WithName("status-file").Error(err, "Failed to write cluster status file")
-	}
+	// Use the reconciler's shared RNG to avoid correlated seeds
+	return r.rng.Intn(arrayLength)
 }
 
 // cleanupOrphanedK03Resources removes orphaned RBAC resources when partial deletions occur
@@ -503,6 +505,9 @@ func (r *VulnerableLabReconciler) mapResourceToLab(ctx context.Context, obj clie
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *VulnerableLabReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Initialize the random number generator once
+	r.rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.VulnerableLab{}).
 		Watches(

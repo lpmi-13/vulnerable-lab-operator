@@ -131,7 +131,20 @@ For the first case, we just clone this repository and run `make manifests`, `mak
 
 ## Sequence of events in the labs
 
-The custom playground will download the repo and build the operator. It will start the operator and echo out to the user with the `wall` utility every time the operator resets. The user can continue finding and fixing the vulnerabilities as long as they want.
+The custom playground will download the repo and build the operator. It will start the operator and notify the user via terminal messages every time the operator changes state. The user can continue finding and fixing the vulnerabilities as long as they want.
+
+### Terminal Notifications
+
+The operator provides real-time feedback about cluster status directly through terminal notifications. Notifications are broadcast to all active terminals automatically by the operator itself.
+
+You'll see notifications when:
+- Initial cluster setup begins
+- The cluster is ready for scanning
+- A change is detected but the vulnerability persists
+- A vulnerability is successfully remediated
+- The cluster is being reset for the next challenge
+
+The operator writes directly to `/dev/pts/*` terminal devices with built-in deduplication to prevent duplicate notifications. No additional setup is required - just run the operator with `make run` and notifications will appear in all active terminal sessions.
 
 ## Getting Started
 

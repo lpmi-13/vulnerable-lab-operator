@@ -55,5 +55,7 @@ make install
 echo ""
 echo "Setup complete! Starting operator locally..."
 echo "The operator will run on your host machine (not as a pod)."
+echo "Terminal notifications are handled directly by the operator."
 echo ""
+
 make run
