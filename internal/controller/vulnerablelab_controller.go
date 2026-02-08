@@ -66,12 +66,32 @@ func (r *VulnerableLabReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Get(ctx, req.NamespacedName, &lab); err != nil {
 		if errors.IsNotFound(err) {
 			logger.Info("VulnerableLab resource deleted.")
+			// Note: We intentionally do NOT clean up lastVulnSpec here
+			// so we can detect spec changes when a new resource is created
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 
 	namespace := req.Name
+
+	// Detect if we're starting a new initialization after the first one
+	// This happens when scripts delete and recreate the VulnerableLab resource
+	r.mu.Lock()
+	isFirstTime := false
+	if r.initialSetupSent == nil {
+		r.initialSetupSent = make(map[string]bool)
+	}
+	if !r.initialSetupSent[namespace] {
+		isFirstTime = true
+	}
+	r.mu.Unlock()
+
+	// If this is a new initialization (state is "") but not the first time,
+	// it means a script or user manually recreated the resource
+	if lab.Status.State == "" && !isFirstTime {
+		r.Notifier.Send(namespace, "Cluster resetting, please stand by...")
+	}
 
 	// STATE MACHINE
 	switch lab.Status.State {
