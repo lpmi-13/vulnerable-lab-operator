@@ -34,6 +34,205 @@ func GetAppStack(namespace string) []client.Object {
 	pathPrefix := networkingv1.PathTypePrefix
 
 	return []client.Object{
+		// Service Account - must come first since all deployments reference it
+		&corev1.ServiceAccount{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "restricted-sa",
+				Namespace: namespace,
+			},
+			AutomountServiceAccountToken: ptr.To(false),
+		},
+
+		// Minimal Role for restricted-sa with no secret access
+		&rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "restricted-role",
+				Namespace: namespace,
+			},
+			Rules: []rbacv1.PolicyRule{
+				{
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+					Verbs:     []string{"get"},
+				},
+			},
+		},
+
+		// RoleBinding for restricted-sa
+		&rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "restricted-binding",
+				Namespace: namespace,
+			},
+			Subjects: []rbacv1.Subject{
+				{
+					Kind:      "ServiceAccount",
+					Name:      "restricted-sa",
+					Namespace: namespace,
+				},
+			},
+			RoleRef: rbacv1.RoleRef{
+				Kind:     "Role",
+				Name:     "restricted-role",
+				APIGroup: "rbac.authorization.k8s.io",
+			},
+		},
+
+		// All Secrets - must come before deployments that reference them
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "postgres-credentials",
+				Namespace: namespace,
+			},
+			StringData: map[string]string{
+				"username": "appuser",
+				"password": "apppassword",
+			},
+			Type: corev1.SecretTypeOpaque,
+		},
+
+		// API Service Secrets
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "api-secrets",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "backend"},
+			},
+			StringData: map[string]string{
+				"jwt-secret": "super-secure-jwt-signing-key-2024",
+			},
+			Type: corev1.SecretTypeOpaque,
+		},
+
+		// Redis Authentication Secret
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "redis-auth",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "cache"},
+			},
+			StringData: map[string]string{
+				"password": "redis-secure-password-123",
+			},
+			Type: corev1.SecretTypeOpaque,
+		},
+
+		// Grafana Credentials Secret
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "grafana-credentials",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "monitoring"},
+			},
+			StringData: map[string]string{
+				"admin-user":     "admin",
+				"admin-password": "admin",
+			},
+			Type: corev1.SecretTypeOpaque,
+		},
+
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "payment-api-key",
+				Namespace: namespace,
+			},
+			StringData: map[string]string{
+				"key": "sk_test_12345",
+			},
+			Type: corev1.SecretTypeOpaque,
+		},
+
+		// TLS Certificates Secret
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "tls-certificates",
+				Namespace: namespace,
+			},
+			StringData: map[string]string{
+				"tls.crt": "-----BEGIN CERTIFICATE-----\nMIICDzCCAXgCAQAwDQYJKoZIhvcNAQEFBQAwFTETMBEGA1UEAwwKbXlkb21haW4u\n...\n-----END CERTIFICATE-----",
+				"tls.key": "-----BEGIN PRIVATE KEY-----\nMIICdwIBADANBgkqhkiG9w0BAQEFAASCAmEwggJdAgEAAoGBAK9Z...\n-----END PRIVATE KEY-----",
+			},
+			Type: corev1.SecretTypeTLS,
+		},
+
+		// All ConfigMaps - must come before deployments that reference them
+		// Prometheus ConfigMap
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "prometheus-config",
+				Namespace: namespace,
+			},
+			Data: map[string]string{
+				"prometheus.yml": `
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'api'
+    static_configs:
+      - targets: ['api-service:9898']
+
+  - job_name: 'webapp'
+    static_configs:
+      - targets: ['webapp-service:3000']
+`,
+			},
+		},
+
+		// Webapp Nginx Configuration
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "webapp-nginx-config",
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/component": "frontend"},
+			},
+			Data: map[string]string{
+				"nginx.conf": `# Run nginx as non-root user
+# PID file in writable location
+pid /tmp/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    # Use /tmp for cache directories (writable by non-root)
+    proxy_temp_path /tmp/proxy_temp;
+    client_body_temp_path /tmp/client_temp;
+    fastcgi_temp_path /tmp/fastcgi_temp;
+    uwsgi_temp_path /tmp/uwsgi_temp;
+    scgi_temp_path /tmp/scgi_temp;
+
+    sendfile        on;
+    keepalive_timeout  65;
+
+    server {
+        listen 8080;
+        listen [::]:8080;
+        server_name localhost;
+
+        location / {
+            root   /usr/share/nginx/html;
+            index  index.html index.htm;
+        }
+
+        error_page   500 502 503 504  /50x.html;
+        location = /50x.html {
+            root   /usr/share/nginx/html;
+        }
+    }
+}`,
+			},
+		},
+
 		// 1. PostgreSQL Database
 		&appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
@@ -211,17 +410,6 @@ func GetAppStack(namespace string) []client.Object {
 					},
 				},
 			},
-		},
-		&corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "postgres-credentials",
-				Namespace: namespace,
-			},
-			StringData: map[string]string{
-				"username": "appuser",
-				"password": "apppassword",
-			},
-			Type: corev1.SecretTypeOpaque,
 		},
 
 		// 2. Redis Cache
@@ -459,35 +647,7 @@ func GetAppStack(namespace string) []client.Object {
 			},
 		},
 
-		// 4. Prometheus ConfigMap
-		&corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "prometheus-config",
-				Namespace: namespace,
-			},
-			Data: map[string]string{
-				"prometheus.yml": `
-global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
-
-scrape_configs:
-  - job_name: 'prometheus'
-    static_configs:
-      - targets: ['localhost:9090']
-
-  - job_name: 'api'
-    static_configs:
-      - targets: ['api-service:9898']
-
-  - job_name: 'webapp'
-    static_configs:
-      - targets: ['webapp-service:3000']
-`,
-			},
-		},
-
-		// 5. Grafana Dashboard
+		// 4. Grafana Dashboard
 		&appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "grafana",
@@ -652,7 +812,7 @@ scrape_configs:
 								Name:            "api-server",
 								Image:           "node:22-alpine",
 								ImagePullPolicy: corev1.PullAlways,
-								Command:         []string{"sleep", "infinity"}, // Keep container running
+								Command:         []string{"sleep", "infinity"},
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 5000,
@@ -840,8 +1000,7 @@ scrape_configs:
 										MountPath: "/tmp",
 									},
 								},
-								// Readiness probe using /bin/true since this container only runs "sleep infinity"
-								// and doesn't serve actual requests - this silences kube-score warnings
+								// Readiness probe: always returns true (since sleep infinity doesn't listen on ports)
 								ReadinessProbe: &corev1.Probe{
 									ProbeHandler: corev1.ProbeHandler{
 										Exec: &corev1.ExecAction{
@@ -851,7 +1010,7 @@ scrape_configs:
 									InitialDelaySeconds: 5,
 									PeriodSeconds:       10,
 								},
-								// Liveness probe checking if sleep process is running
+								// Liveness probe: checks if sleep process is running
 								LivenessProbe: &corev1.Probe{
 									ProbeHandler: corev1.ProbeHandler{
 										Exec: &corev1.ExecAction{
@@ -1027,118 +1186,6 @@ scrape_configs:
 						Name:       "http",
 					},
 				},
-			},
-		},
-		&corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "payment-api-key",
-				Namespace: namespace,
-			},
-			StringData: map[string]string{
-				"key": "sk_test_12345",
-			},
-			Type: corev1.SecretTypeOpaque,
-		},
-
-		// API Service Secrets
-		&corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "api-secrets",
-				Namespace: namespace,
-				Labels:    map[string]string{"app.kubernetes.io/component": "backend"},
-			},
-			StringData: map[string]string{
-				"jwt-secret": "super-secure-jwt-signing-key-2024",
-			},
-			Type: corev1.SecretTypeOpaque,
-		},
-
-		// Redis Authentication Secret
-		&corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "redis-auth",
-				Namespace: namespace,
-				Labels:    map[string]string{"app.kubernetes.io/component": "cache"},
-			},
-			StringData: map[string]string{
-				"password": "redis-secure-password-123",
-			},
-			Type: corev1.SecretTypeOpaque,
-		},
-
-		// Grafana Credentials Secret
-		&corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "grafana-credentials",
-				Namespace: namespace,
-				Labels:    map[string]string{"app.kubernetes.io/component": "monitoring"},
-			},
-			StringData: map[string]string{
-				"admin-user":     "admin",
-				"admin-password": "admin",
-			},
-			Type: corev1.SecretTypeOpaque,
-		},
-
-		// TLS Certificates Secret
-		&corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "tls-certificates",
-				Namespace: namespace,
-			},
-			StringData: map[string]string{
-				"tls.crt": "-----BEGIN CERTIFICATE-----\nMIICDzCCAXgCAQAwDQYJKoZIhvcNAQEFBQAwFTETMBEGA1UEAwwKbXlkb21haW4u\n...\n-----END CERTIFICATE-----",
-				"tls.key": "-----BEGIN PRIVATE KEY-----\nMIICdwIBADANBgkqhkiG9w0BAQEFAASCAmEwggJdAgEAAoGBAK9Z...\n-----END PRIVATE KEY-----",
-			},
-			Type: corev1.SecretTypeTLS,
-		},
-
-		// Webapp Nginx Configuration
-		&corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "webapp-nginx-config",
-				Namespace: namespace,
-				Labels:    map[string]string{"app.kubernetes.io/component": "frontend"},
-			},
-			Data: map[string]string{
-				"nginx.conf": `# Run nginx as non-root user
-# PID file in writable location
-pid /tmp/nginx.pid;
-
-events {
-    worker_connections 1024;
-}
-
-http {
-    include       /etc/nginx/mime.types;
-    default_type  application/octet-stream;
-
-    # Use /tmp for cache directories (writable by non-root)
-    proxy_temp_path /tmp/proxy_temp;
-    client_body_temp_path /tmp/client_temp;
-    fastcgi_temp_path /tmp/fastcgi_temp;
-    uwsgi_temp_path /tmp/uwsgi_temp;
-    scgi_temp_path /tmp/scgi_temp;
-
-    sendfile        on;
-    keepalive_timeout  65;
-
-    server {
-        listen 8080;
-        listen [::]:8080;
-        server_name localhost;
-
-        location / {
-            root   /usr/share/nginx/html;
-            index  index.html index.htm;
-        }
-
-        error_page   500 502 503 504  /50x.html;
-        location = /50x.html {
-            root   /usr/share/nginx/html;
-        }
-    }
-}`,
 			},
 		},
 
@@ -1778,49 +1825,6 @@ http {
 					},
 				},
 			},
-		},
-
-		// Minimal Role for restricted-sa with no secret access
-		&rbacv1.Role{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "restricted-role",
-				Namespace: namespace,
-			},
-			Rules: []rbacv1.PolicyRule{
-				{
-					APIGroups: []string{""},
-					Resources: []string{"pods"},
-					Verbs:     []string{"get"},
-				},
-			},
-		},
-
-		// RoleBinding for restricted-sa
-		&rbacv1.RoleBinding{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "restricted-binding",
-				Namespace: namespace,
-			},
-			Subjects: []rbacv1.Subject{
-				{
-					Kind:      "ServiceAccount",
-					Name:      "restricted-sa",
-					Namespace: namespace,
-				},
-			},
-			RoleRef: rbacv1.RoleRef{
-				Kind:     "Role",
-				Name:     "restricted-role",
-				APIGroup: "rbac.authorization.k8s.io",
-			},
-		},
-
-		&corev1.ServiceAccount{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "restricted-sa",
-				Namespace: namespace,
-			},
-			AutomountServiceAccountToken: ptr.To(false),
 		},
 	}
 }

@@ -53,10 +53,6 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 		if err := applyK01ToStack(appStack, targetResource, subIssue, rng); err != nil {
 			return fmt.Errorf("failed to apply K01 vulnerability: %w", err)
 		}
-	case "K02":
-		if err := applyK02ToStack(appStack, targetResource, subIssue); err != nil {
-			return fmt.Errorf("failed to apply K02 vulnerability: %w", err)
-		}
 	case "K03":
 		if err := applyK03ToStack(&appStack, targetResource, namespace, subIssue, rng); err != nil {
 			return fmt.Errorf("failed to apply K03 vulnerability: %w", err)
@@ -95,6 +91,8 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 				}
 				// Copy resourceVersion to our modified object
 				obj.SetResourceVersion(existing.GetResourceVersion())
+				// Preserve immutable fields before update
+				preserveImmutableFields(obj, existing)
 				if err := c.Update(ctx, obj); err != nil {
 					return fmt.Errorf("failed to update existing resource %s: %w", obj.GetName(), err)
 				}
@@ -106,6 +104,16 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 
 	logger.Info("Vulnerable stack deployment complete", "vulnerability", vulnerabilityID, "target", targetResource)
 	return nil
+}
+
+// preserveImmutableFields copies immutable fields from existing resource to new resource before update
+func preserveImmutableFields(obj, existing client.Object) {
+	switch newObj := obj.(type) {
+	case *corev1.Service:
+		existingSvc := existing.(*corev1.Service)
+		newObj.Spec.ClusterIP = existingSvc.Spec.ClusterIP
+		newObj.Spec.ClusterIPs = existingSvc.Spec.ClusterIPs
+	}
 }
 
 // These helper functions are no longer needed since we use the baseline stack directly
@@ -202,58 +210,6 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 }
 
 // applyK02ToStack modifies the baseline stack to apply supply chain vulnerabilities
-func applyK02ToStack(appStack []client.Object, targetDeployment string, subIssue *int) error {
-	// Define vulnerable images with critical CVEs for realistic security testing
-	vulnerableImages := []struct {
-		deployment string
-		image      string
-	}{
-		{"api", "node:10-alpine"},              // 0: 4 critical CVEs vs current node:22-alpine
-		{"webapp", "nginx:1.15-alpine"},        // 1: 4 critical CVEs vs current nginx:1.29.1-alpine
-		{"user-service", "python:3.5-alpine"},  // 2: 11 critical CVEs vs current python:3.13-alpine
-		{"payment-service", "ruby:2.6-alpine"}, // 3: 4 critical CVEs vs current ruby:3.3-alpine
-		{"grafana", "grafana/grafana:9.0.0"},   // 4: vs current grafana/grafana:12.0.0
-	}
-
-	var selectedTarget string
-	var vulnerableImage string
-
-	if subIssue != nil {
-		// Use specified sub-issue index
-		if *subIssue < 0 || *subIssue >= len(vulnerableImages) {
-			return fmt.Errorf("subIssue %d out of range for K02 (valid: 0-%d)", *subIssue, len(vulnerableImages)-1)
-		}
-		selectedTarget = vulnerableImages[*subIssue].deployment
-		vulnerableImage = vulnerableImages[*subIssue].image
-	} else {
-		// Use target deployment (existing behavior)
-		vulnerableImageMap := map[string]string{
-			"api":             "node:10-alpine",
-			"webapp":          "nginx:1.15-alpine",
-			"user-service":    "python:3.5-alpine",
-			"payment-service": "ruby:2.6-alpine",
-			"grafana":         "grafana/grafana:9.0.0",
-		}
-		var exists bool
-		vulnerableImage, exists = vulnerableImageMap[targetDeployment]
-		if !exists {
-			return fmt.Errorf("no vulnerable image defined for target: %s", targetDeployment)
-		}
-		selectedTarget = targetDeployment
-	}
-
-	// Find and modify the target deployment within the stack
-	for _, obj := range appStack {
-		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == selectedTarget {
-			// Replace the image with the vulnerable version
-			dep.Spec.Template.Spec.Containers[0].Image = vulnerableImage
-			return nil
-		}
-	}
-
-	return fmt.Errorf("target deployment %s not found in baseline stack", selectedTarget)
-}
-
 // applyK03ToStack modifies the baseline stack to apply overly permissive RBAC configurations
 func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) error {
 	// Find and modify the target deployment within the stack
@@ -348,13 +304,7 @@ func createNamespaceOverpermissiveRBAC(appStack *[]client.Object, namespace stri
 	}
 
 	// Add the RBAC resources to the stack
-	for i, obj := range *appStack {
-		if _, ok := obj.(*corev1.ServiceAccount); ok {
-			// Insert role and binding right after service account
-			*appStack = append((*appStack)[:i+1], append([]client.Object{role, binding}, (*appStack)[i+1:]...)...)
-			break
-		}
-	}
+	*appStack = append(*appStack, role, binding)
 
 	return nil
 }
@@ -410,13 +360,7 @@ func createDefaultServiceAccountRBAC(appStack *[]client.Object, namespace string
 	}
 
 	// Add the RBAC resources to the stack (Role first, then RoleBinding)
-	for i, obj := range *appStack {
-		if _, ok := obj.(*corev1.ServiceAccount); ok {
-			// Insert role and binding right after service account
-			*appStack = append((*appStack)[:i+1], append([]client.Object{role, binding}, (*appStack)[i+1:]...)...)
-			break
-		}
-	}
+	*appStack = append(*appStack, role, binding)
 
 	return nil
 }
@@ -471,13 +415,7 @@ func createExcessiveSecretsRBAC(appStack *[]client.Object, namespace string) err
 	}
 
 	// Add the RBAC resources to the stack
-	for i, obj := range *appStack {
-		if _, ok := obj.(*corev1.ServiceAccount); ok {
-			// Insert role and binding right after service account
-			*appStack = append((*appStack)[:i+1], append([]client.Object{role, binding}, (*appStack)[i+1:]...)...)
-			break
-		}
-	}
+	*appStack = append(*appStack, role, binding)
 
 	return nil
 }

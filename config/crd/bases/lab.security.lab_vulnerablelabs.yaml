@@ -46,7 +46,6 @@ spec:
               vulnerability:
                 enum:
                 - K01
-                - K02
                 - K03
                 - K06
                 - K07

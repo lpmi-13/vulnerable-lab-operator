@@ -9,9 +9,13 @@ kubectl delete rolebinding test-lab-system-binding -n kube-system --ignore-not-f
 # Delete the VulnerableLab resource first
 kubectl delete vulnerablelab test-lab --ignore-not-found --timeout=30s
 
+# Force-delete all pods to avoid Terminating state
+echo "Force-deleting pods in test-lab..."
+kubectl delete pods --all -n test-lab --grace-period=0 --force --ignore-not-found 2>/dev/null || true
+
 # Fast namespace deletion with aggressive cleanup
 echo "Deleting test-lab namespace..."
-kubectl delete ns test-lab --ignore-not-found --timeout=3s
+kubectl delete ns test-lab --ignore-not-found --timeout=15s
 
 # If still exists, force finalize via raw API
 if kubectl get ns test-lab >/dev/null 2>&1; then

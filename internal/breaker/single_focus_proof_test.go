@@ -29,18 +29,6 @@ func TestSingleFocusProof(t *testing.T) {
 		t.Log("✓ K01 applies exactly ONE random security context vulnerability (privileged, root user, or dangerous capabilities)")
 	})
 
-	// Test K02 - Supply Chain Vulnerabilities
-	t.Run("K02_Single_Image_Change", func(t *testing.T) {
-		for i := 0; i < 10; i++ {
-			appStack := baseline.GetAppStack(namespace)
-			err := applyK02ToStack(appStack, target, nil)
-			if err != nil {
-				t.Fatalf("K02 iteration %d failed: %v", i, err)
-			}
-		}
-		t.Log("✓ K02 applies exactly ONE vulnerable image change to the target deployment")
-	})
-
 	// Test K03 - Overly Permissive RBAC
 	t.Run("K03_Single_RBAC_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
@@ -90,7 +78,7 @@ func TestSingleFocusProof(t *testing.T) {
 	})
 
 	t.Log("\n=== PROOF COMPLETE ===")
-	t.Log("✅ Each vulnerability category (K01, K02, K03, K06, K07, K08) applies exactly ONE focused misconfiguration")
+	t.Log("✅ Each vulnerability category (K01, K03, K06, K07, K08) applies exactly ONE focused misconfiguration")
 	t.Log("✅ This enables single-fix testing where learners need to identify and remediate exactly one issue")
 	t.Log("✅ Random selection within each category provides varied learning experiences")
 }
@@ -113,10 +101,6 @@ func TestRandomizationWorks(t *testing.T) {
 		{"K01", func() error {
 			appStack := baseline.GetAppStack(namespace)
 			return applyK01ToStack(appStack, target, nil, rng)
-		}},
-		{"K02", func() error {
-			appStack := baseline.GetAppStack(namespace)
-			return applyK02ToStack(appStack, target, nil)
 		}},
 		{"K03", func() error {
 			appStack := baseline.GetAppStack(namespace)

@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -94,74 +95,6 @@ func TestK01MakesFocusedChanges(t *testing.T) {
 
 		if changesCount != 1 {
 			t.Errorf("K01 should make exactly 1 security context change, but made %d changes", changesCount)
-		}
-	}
-}
-
-func TestK02MakesFocusedChanges(t *testing.T) {
-	namespace := "test-k02-focused"
-
-	for i := 0; i < 20; i++ {
-		appStack := baseline.GetAppStack(namespace)
-
-		// Find the target deployment before applying K02
-		var originalDep *appsv1.Deployment
-		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
-				originalDep = dep.DeepCopy()
-				break
-			}
-		}
-
-		if originalDep == nil {
-			t.Fatal("Could not find api deployment in baseline stack")
-		}
-
-		originalImage := originalDep.Spec.Template.Spec.Containers[0].Image
-
-		err := applyK02ToStack(appStack, "api", nil)
-		if err != nil {
-			t.Fatalf("applyK02ToStack failed: %v", err)
-		}
-
-		// Find the modified deployment
-		var modifiedDep *appsv1.Deployment
-		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
-				modifiedDep = dep
-				break
-			}
-		}
-
-		if modifiedDep == nil {
-			t.Fatal("Could not find api deployment after K02 application")
-		}
-
-		modifiedImage := modifiedDep.Spec.Template.Spec.Containers[0].Image
-
-		// Check that only the image was changed
-		if originalImage == modifiedImage {
-			t.Error("K02 should change the container image, but it remained the same")
-		}
-
-		// Verify it changed to one of the expected vulnerable images
-		expectedImages := []string{
-			"node:10-alpine",
-			"nginx:1.15-alpine",
-			"python:3.5-alpine",
-			"ruby:2.6-alpine",
-			"grafana/grafana:9.0.0",
-		}
-		found := false
-		for _, expectedImage := range expectedImages {
-			if modifiedImage == expectedImage {
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			t.Errorf("K02 should change image to a known vulnerable version, but got: %s", modifiedImage)
 		}
 	}
 }
@@ -292,6 +225,15 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 			}
 		}
 
+		// Check: AutomountServiceAccountToken enabled
+		if modifiedDep.Spec.Template.Spec.AutomountServiceAccountToken != nil &&
+			*modifiedDep.Spec.Template.Spec.AutomountServiceAccountToken &&
+			(originalDep.Spec.Template.Spec.AutomountServiceAccountToken == nil ||
+				!*originalDep.Spec.Template.Spec.AutomountServiceAccountToken) {
+			vulnerabilityFound = true
+			t.Logf("K06 iteration %d: Applied auto-mount service account token", i)
+		}
+
 		// Check 5: Missing fsGroup in PodSecurityContext (new storage-related vuln)
 		// This vulnerability creates a PodSecurityContext without fsGroup
 		if modifiedDep.Spec.Template.Spec.SecurityContext != nil &&
@@ -377,19 +319,26 @@ func TestK07MakesFocusedChanges(t *testing.T) {
 
 		vulnerabilityFound := false
 
-		// Check Case 0: Network policy disabled annotation
-		if modifiedDep.Spec.Template.Annotations != nil {
-			if policy, exists := modifiedDep.Spec.Template.Annotations["networking.kubernetes.io/network-policy"]; exists && policy == "disabled" {
-				vulnerabilityFound = true
-				t.Logf("K07 iteration %d: Applied network policy disabled annotation", i)
+		// Check Case 0: NetworkPolicy removed from stack
+		hasNetworkPolicy := false
+		for _, obj := range appStack {
+			if _, ok := obj.(*networkingv1.NetworkPolicy); ok {
+				hasNetworkPolicy = true
+				break
 			}
 		}
+		// Baseline should have a NetworkPolicy; if it's gone, case 0 was applied
+		if !hasNetworkPolicy {
+			vulnerabilityFound = true
+			t.Logf("K07 iteration %d: Removed NetworkPolicy from stack", i)
+		}
 
-		// Check Case 1: Network isolation disabled annotation
-		if modifiedDep.Spec.Template.Annotations != nil {
-			if isolation, exists := modifiedDep.Spec.Template.Annotations["networking.kubernetes.io/isolation"]; exists && isolation == "none" {
+		// Check Case 1: Allow-all NetworkPolicy added
+		for _, obj := range appStack {
+			if np, ok := obj.(*networkingv1.NetworkPolicy); ok && np.Name == "allow-all-traffic" {
 				vulnerabilityFound = true
-				t.Logf("K07 iteration %d: Applied network isolation disabled annotation", i)
+				t.Logf("K07 iteration %d: Added allow-all NetworkPolicy", i)
+				break
 			}
 		}
 
@@ -399,12 +348,10 @@ func TestK07MakesFocusedChanges(t *testing.T) {
 			t.Logf("K07 iteration %d: Applied postgres service NodePort exposure", i)
 		}
 
-		// Check Case 3: Service exposure annotation (but service type unchanged)
-		if modifiedPostgresSvc.Annotations != nil && originalPostgresSvc.Spec.Type == modifiedPostgresSvc.Spec.Type {
-			if exposure, exists := modifiedPostgresSvc.Annotations["networking.kubernetes.io/exposure"]; exists && exposure == "external-database-access" {
-				vulnerabilityFound = true
-				t.Logf("K07 iteration %d: Applied postgres service exposure annotation", i)
-			}
+		// Check Case 3: Postgres service changed to LoadBalancer
+		if modifiedPostgresSvc.Spec.Type == corev1.ServiceTypeLoadBalancer && originalPostgresSvc.Spec.Type != corev1.ServiceTypeLoadBalancer {
+			vulnerabilityFound = true
+			t.Logf("K07 iteration %d: Applied postgres service LoadBalancer exposure", i)
 		}
 
 		if !vulnerabilityFound {
@@ -473,6 +420,18 @@ func TestK08MakesFocusedChanges(t *testing.T) {
 				}
 			}
 
+			// Check for hardcoded secrets appended as new environment variables
+			if len(modifiedDep.Spec.Template.Spec.Containers[0].Env) > len(originalDep.Spec.Template.Spec.Containers[0].Env) {
+				for j := len(originalDep.Spec.Template.Spec.Containers[0].Env); j < len(modifiedDep.Spec.Template.Spec.Containers[0].Env); j++ {
+					env := modifiedDep.Spec.Template.Spec.Containers[0].Env[j]
+					if env.Value != "" && env.ValueFrom == nil {
+						vulnerabilityFound = true
+						t.Logf("K08 iteration %d: Applied hardcoded secrets as new env vars", i)
+						break
+					}
+				}
+			}
+
 			// Check for insecure volume permissions
 			for _, volume := range modifiedDep.Spec.Template.Spec.Volumes {
 				if volume.Secret != nil && volume.Secret.DefaultMode != nil {
@@ -516,7 +475,6 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 			fn   func([]client.Object, string) error
 		}{
 			{"K01", func(stack []client.Object, t string) error { return applyK01ToStack(stack, t, nil, rng) }},
-			{"K02", func(stack []client.Object, t string) error { return applyK02ToStack(stack, t, nil) }},
 			{"K06", func(stack []client.Object, t string) error { return applyK06ToStack(stack, t, nil, rng) }},
 		}
 

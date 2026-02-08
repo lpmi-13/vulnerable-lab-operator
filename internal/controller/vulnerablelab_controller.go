@@ -33,11 +33,11 @@ type VulnerableLabReconciler struct {
 	Scheme   *runtime.Scheme
 	Notifier *notifier.Notifier
 	// State tracking
-	watchTriggered   map[string]bool
-	initialSetupSent map[string]bool
-	vulnerableSince  map[string]time.Time
-	ignoreWatchUntil map[string]time.Time // suppress watch events during initialization
-	mu               sync.Mutex
+	watchTriggered       map[string]bool
+	initialSetupSent     map[string]bool
+	verificationAttempts map[string]int
+	ignoreWatchUntil     map[string]time.Time // suppress watch events during initialization
+	mu                   sync.Mutex
 	// Random number generator for vulnerability selection
 	rng *rand.Rand
 }
@@ -147,7 +147,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	} else {
 		// Complete randomization (behavior 1 above)
 		// Randomly choose both vulnerability category and sub-issue
-		vulnerabilities := []string{"K01", "K02", "K03", "K06", "K07", "K08"}
+		vulnerabilities := []string{"K01", "K03", "K06", "K07", "K08"}
 		vulnIndex := r.selectRandomIndex(len(vulnerabilities))
 		chosenVuln = vulnerabilities[vulnIndex]
 		if lab.Spec.SubIssue != nil {
@@ -165,8 +165,6 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	switch chosenVuln {
 	case "K01":
 		viableTargets = []string{"api", "webapp", "redis-cache", "prometheus", "grafana", "postgres-db", "user-service", "payment-service"}
-	case "K02":
-		viableTargets = []string{"api", "webapp", "user-service", "payment-service", "grafana"}
 	case "K03":
 		viableTargets = []string{"api", "user-service", "payment-service"} // Services that need RBAC permissions
 	case "K06":
@@ -188,7 +186,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	if r.ignoreWatchUntil == nil {
 		r.ignoreWatchUntil = make(map[string]time.Time)
 	}
-	r.ignoreWatchUntil[namespace] = time.Now().Add(15 * time.Second)
+	r.ignoreWatchUntil[namespace] = time.Now().Add(10 * time.Second)
 	// Clear any stale watch triggers from before initialization
 	if r.watchTriggered != nil {
 		delete(r.watchTriggered, namespace)
@@ -213,6 +211,60 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 		return ctrl.Result{}, err
 	}
 
+	// Verify the vulnerability is visible in the API before transitioning to StateVulnerable
+	// This prevents false positives from stale K8s API cache
+	targetDep := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Name: targetDeployment, Namespace: namespace}, targetDep); err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Target deployment not found yet, requeueing", "target", targetDeployment)
+			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	// Check if vulnerability is visible yet
+	isStale, err := breaker.CheckRemediation(ctx, r.Client, chosenVuln, targetDeployment, namespace)
+	if err != nil {
+		logger.Error(err, "Failed to verify vulnerability state")
+		return ctrl.Result{}, err
+	}
+
+	if isStale {
+		// Cache is stale, vulnerability not visible yet
+		r.mu.Lock()
+		if r.verificationAttempts == nil {
+			r.verificationAttempts = make(map[string]int)
+		}
+		r.verificationAttempts[namespace]++
+		attempts := r.verificationAttempts[namespace]
+		r.mu.Unlock()
+
+		if attempts > 10 {
+			logger.Error(fmt.Errorf("verification timeout"), "Vulnerability state not visible after 10 attempts", "target", targetDeployment)
+			// Get the latest version of the resource before updating
+			if err := r.Get(ctx, client.ObjectKey{Name: lab.Name, Namespace: lab.Namespace}, lab); err != nil {
+				return ctrl.Result{}, err
+			}
+			if updateErr := r.updateStatusWithRetry(ctx, lab, func(lab *v1alpha1.VulnerableLab) {
+				lab.Status.State = v1alpha1.StateError
+				lab.Status.Message = "Failed to verify vulnerability state after multiple attempts"
+			}); updateErr != nil {
+				logger.Error(updateErr, "Failed to update error status")
+			}
+			return ctrl.Result{}, fmt.Errorf("verification timeout after %d attempts", attempts)
+		}
+
+		logger.Info("Vulnerability not visible in cache yet, requeueing", "target", targetDeployment, "attempt", attempts)
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	}
+
+	// Clear verification attempts on success
+	r.mu.Lock()
+	if r.verificationAttempts != nil {
+		delete(r.verificationAttempts, namespace)
+	}
+	r.mu.Unlock()
+
 	// Get the latest version of the resource before updating
 	if err := r.Get(ctx, client.ObjectKey{Name: lab.Name, Namespace: lab.Namespace}, lab); err != nil {
 		return ctrl.Result{}, err
@@ -222,27 +274,16 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 		lab.Status.ChosenVulnerability = chosenVuln
 		lab.Status.TargetResource = targetDeployment
 		lab.Status.State = v1alpha1.StateVulnerable
-		lab.Status.Message = fmt.Sprintf("Cluster is vulnerable. Find and fix issue %s. Target: %s", chosenVuln, targetDeployment)
+		lab.Status.Message = fmt.Sprintf("Cluster is vulnerable. Find and fix the %s issue.", chosenVuln)
 	}); err != nil {
 		logger.Error(err, "Failed to update status after lab initialization")
 		return ctrl.Result{}, err
 	}
 
-	// Record timestamp when entering StateVulnerable for grace period
-	r.mu.Lock()
-	if r.vulnerableSince == nil {
-		r.vulnerableSince = make(map[string]time.Time)
-	}
-	r.vulnerableSince[namespace] = time.Now()
-	// Re-extend watch suppression from completion time to cover
-	// post-creation K8s status updates (pod readiness, rollout progress)
-	r.ignoreWatchUntil[namespace] = time.Now().Add(25 * time.Second)
-	r.mu.Unlock()
-
 	logger.Info("Lab initialization complete", "vulnerability", chosenVuln, "target", targetDeployment)
 
-	// Send notification
-	r.Notifier.Send(namespace, "Ready for scanning")
+	message := fmt.Sprintf("Ready for scanning. A vulnerability has been introduced in the %s namespace.\nUse a scanner like trivy or kubescape to find it.", namespace)
+	r.Notifier.Send(namespace, message)
 
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
@@ -251,39 +292,9 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 	logger := log.FromContext(ctx)
 	logger.Info("Checking if vulnerability has been remediated", "vulnerability", lab.Status.ChosenVulnerability, "target", lab.Status.TargetResource)
 
-	// Grace period: skip remediation checks for 5 seconds after entering StateVulnerable
-	// This prevents false positives during initialization when cache propagation is incomplete
-	r.mu.Lock()
-	vulnTime, hasTimestamp := r.vulnerableSince[namespace]
-	r.mu.Unlock()
-
-	if hasTimestamp {
-		elapsed := time.Since(vulnTime)
-		if elapsed < 5*time.Second {
-			logger.Info("Grace period active, skipping remediation check", "elapsed", elapsed.String(), "remaining", (5*time.Second - elapsed).String())
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-		// Grace period elapsed, clear the entry
-		r.mu.Lock()
-		delete(r.vulnerableSince, namespace)
-		r.mu.Unlock()
-	}
-
 	// For K03 vulnerabilities, check for partial deletions and clean up
 	if lab.Status.ChosenVulnerability == "K03" {
 		r.cleanupOrphanedK03Resources(ctx, namespace)
-	}
-
-	// Guard: verify the target deployment exists before checking remediation.
-	// On startup, resources may not exist yet (previous run cleaned up, or still being created).
-	// CheckRemediation treats "not found" as "fixed", which would be a false positive.
-	targetDep := &appsv1.Deployment{}
-	if err := r.Get(ctx, client.ObjectKey{Name: lab.Status.TargetResource, Namespace: namespace}, targetDep); err != nil {
-		if errors.IsNotFound(err) {
-			logger.Info("Target deployment not found yet, resources may still be initializing", "target", lab.Status.TargetResource)
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-		return ctrl.Result{}, err
 	}
 
 	isFixed, err := breaker.CheckRemediation(ctx, r.Client, lab.Status.ChosenVulnerability, lab.Status.TargetResource, namespace)
@@ -376,6 +387,13 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 
 	// Clean up any cluster-scoped RBAC resources from K03 vulnerabilities
 	r.cleanupClusterRBAC(ctx, namespace)
+
+	// Clear verification attempts for this namespace
+	r.mu.Lock()
+	if r.verificationAttempts != nil {
+		delete(r.verificationAttempts, namespace)
+	}
+	r.mu.Unlock()
 
 	// Reset the status for a new round
 	// IMPORTANT: We only clear Status fields, NOT Spec fields

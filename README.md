@@ -6,9 +6,9 @@ Sometimes, it's helpful to practice identifying security vulnerabilities in a ru
 
 [K01: Insecure Workload Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K01-insecure-workload-configurations)
 
-[K02: Supply Chain Vulnerabilities](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K02-supply-chain-vulnerabilities)
-
 [K03: Overly Permissive RBAC Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K03-overly-permissive-rbac)
+
+[K02: Supply Chain Vulnerabilities](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K02-supply-chain-vulnerabilities) (we're skipping this, since it's the only one that would require trivy, and I'm trying to limit to scanning tools that need to be used)
 
 [K04: Lack of Centralized Policy Enforcement](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K04-policy-enforcement) (we're skipping this one, since it's difficult to detect controls that evaluate the results of scans)
 
@@ -34,7 +34,6 @@ The first thing to do is run some scanners to see what you can pick up (or you c
 - kubeaudit (for K01, K06, K08) - deprecated, team recommends moving to kube-bench
 - [kube-bench](https://aquasecurity.github.io/kube-bench/v0.6.7/installation/) (for K09)
 - [kube-score](https://github.com/zegl/kube-score)
-- [trivy](https://trivy.dev/dev/getting-started/installation/) (for K02, once you've identified an insecure image...or you can run it in "k8s mode")
 
 ### scanning commands
 
@@ -76,14 +75,6 @@ Each vulnerability category has multiple sub-issues that are randomly selected:
   1. Privileged container - Sets privileged: true
   2. Running as root - Sets runAsUser: 0
   3. Dangerous capabilities - Adds SYS_ADMIN, NET_ADMIN capabilities
-
-- K02 (Supply Chain Vulnerabilities) - 5 sub-issues:
-
-  1. api: node:10-alpine (contains 4 critical CVEs vs secure node:22-alpine)
-  2. webapp: nginx:1.15-alpine (contains 4 critical CVEs vs secure nginx:1.29.1-alpine)
-  3. user-service: python:3.5-alpine (contains 11 critical CVEs vs secure python:3.13-alpine)
-  4. payment-service: ruby:2.6-alpine (contains 4 critical CVEs vs secure ruby:3.3-alpine)
-  5. grafana: grafana/grafana:9.0.0 (outdated vs secure grafana/grafana:12.2.0)
 
 - K03 (Overly Permissive RBAC) - 3 sub-issues:
 

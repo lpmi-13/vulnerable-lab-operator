@@ -21,8 +21,6 @@ func CheckRemediation(ctx context.Context, c client.Client, vulnerabilityID, tar
 	switch vulnerabilityID {
 	case "K01":
 		return checkK01(ctx, c, targetResource, namespace)
-	case "K02":
-		return checkK02(ctx, c, targetResource, namespace)
 	case "K03":
 		return checkK03(ctx, c, targetResource, namespace)
 	// K04 (Lack of Centralized Policy Enforcement) and K05 (Inadequate Logging and Monitoring)
@@ -89,56 +87,6 @@ func checkK01(ctx context.Context, c client.Client, targetDeployment, namespace 
 }
 
 // checkK02 verifies if the supply chain vulnerability has been fixed by checking image versions
-func checkK02(ctx context.Context, c client.Client, targetDeployment, namespace string) (bool, error) {
-	logger := log.FromContext(ctx)
-
-	// Get the deployment
-	dep := &appsv1.Deployment{}
-	err := c.Get(ctx, client.ObjectKey{Name: targetDeployment, Namespace: namespace}, dep)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// The deployment was deleted, which is a valid fix
-			logger.Info("K02 vulnerability remediated: target deployment was deleted", "target", targetDeployment)
-			return true, nil
-		}
-		return false, fmt.Errorf("failed to get deployment %s: %w", targetDeployment, err)
-	}
-
-	currentImage := dep.Spec.Template.Spec.Containers[0].Image
-
-	// Define the vulnerable images that we deployed - updated to match applyK02ToStack
-	vulnerableImages := map[string]string{
-		"api":             "node:10-alpine",
-		"webapp":          "nginx:1.15-alpine",
-		"user-service":    "python:3.5-alpine",
-		"payment-service": "ruby:2.6-alpine",
-		"grafana":         "grafana/grafana:9.0.0",
-	}
-
-	vulnerableImage, wasVulnerable := vulnerableImages[targetDeployment]
-
-	// If this deployment wasn't one we made vulnerable, consider it fixed
-	if !wasVulnerable {
-		logger.Info("K02 vulnerability remediated: target was not vulnerable", "target", targetDeployment)
-		return true, nil
-	}
-
-	// Check if the current image is different from (and preferably newer than) the vulnerable one
-	if currentImage != vulnerableImage {
-		// Basic check: if the image changed at all, consider it fixed
-		// In a real scenario, you might want more sophisticated version comparison
-		logger.Info("K02 vulnerability remediated: image changed", "target", targetDeployment,
-			"oldImage", vulnerableImage, "newImage", currentImage)
-		return true, nil
-	}
-
-	// Optional: Add more sophisticated version comparison here
-	// For example, you could parse version numbers and ensure the new image is actually newer
-
-	logger.Info("K02 vulnerability still active: same vulnerable image", "target", targetDeployment, "image", currentImage)
-	return false, nil
-}
-
 // checkK03 verifies if the RBAC vulnerability has been fixed
 func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace string) (bool, error) {
 	logger := log.FromContext(ctx)

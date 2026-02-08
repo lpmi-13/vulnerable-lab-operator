@@ -1,7 +1,0 @@
-apiVersion: lab.security.lab/v1alpha1
-kind: VulnerableLab
-metadata:
-  name: test-lab
-spec:
-  vulnerability: K02
-  subIssue: 3  # Payment-service vulnerable image (ruby:2.6-alpine)
