@@ -282,7 +282,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 
 	logger.Info("Lab initialization complete", "vulnerability", chosenVuln, "target", targetDeployment)
 
-	message := fmt.Sprintf("Ready for scanning. A vulnerability has been introduced in the %s namespace.\nUse a scanner like trivy or kubescape to find it.", namespace)
+	message := fmt.Sprintf("Ready for scanning. A vulnerability has been introduced in the %s namespace.\nUse a scanner like kubescape to find it.", namespace)
 	r.Notifier.Send(namespace, message)
 
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
