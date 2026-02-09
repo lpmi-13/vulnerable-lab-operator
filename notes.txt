@@ -1,5 +1,3 @@
 - if we wanted to make this capable of running in a multi-node k3s cluster, would there be any benefit from a learning objectives perspective? ie, would that change any of the actual commands (do the scan commands work the same, and are the remediations the same...also have an agent ultrathink about that)?
-- also have an agent plan out if we're missing any unit tests, or if we need to update any to reflect current functionality
 - set up a test iximiuz playground, and snapshot it so you can just load it and start up. We'll need k3s and all the scanner installed.
 - confirm that we wouldn't get any benefit from suggesting to scan with kube-hunter and kube-score
-- fix the currently failing tests

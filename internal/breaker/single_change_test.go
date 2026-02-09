@@ -1,6 +1,7 @@
 package breaker
 
 import (
+	"fmt"
 	"math/rand"
 	"testing"
 	"time"
@@ -16,6 +17,28 @@ import (
 
 // These tests focus on proving that each vulnerability function makes focused, single changes
 // rather than trying to count exact resource modifications (which can be complex due to slice manipulation)
+
+// Helper functions for finding resources in stacks
+
+// findDeployment finds a deployment by name in the given stack
+func findDeployment(stack []client.Object, name string) *appsv1.Deployment {
+	for _, obj := range stack {
+		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == name {
+			return dep
+		}
+	}
+	return nil
+}
+
+// findService finds a service by name in the given stack
+func findService(stack []client.Object, name string) *corev1.Service {
+	for _, obj := range stack {
+		if svc, ok := obj.(*corev1.Service); ok && svc.Name == name {
+			return svc
+		}
+	}
+	return nil
+}
 
 func TestK01MakesFocusedChanges(t *testing.T) {
 	namespace := "test-k01-focused"
@@ -460,6 +483,589 @@ func TestK08MakesFocusedChanges(t *testing.T) {
 		if !vulnerabilityFound {
 			t.Errorf("K08 iteration %d: No secrets management vulnerability detected", i)
 		}
+	}
+}
+
+// Deterministic sub-issue selection tests
+
+func TestK01SubIssueSelection(t *testing.T) {
+	tests := []struct {
+		name     string
+		subIssue int
+		verify   func(*testing.T, *appsv1.Deployment)
+	}{
+		{
+			name:     "subIssue 0: privileged container",
+			subIssue: 0,
+			verify: func(t *testing.T, dep *appsv1.Deployment) {
+				container := &dep.Spec.Template.Spec.Containers[0]
+				if container.SecurityContext == nil || container.SecurityContext.Privileged == nil || !*container.SecurityContext.Privileged {
+					t.Error("expected Privileged == true")
+				}
+				if dep.Spec.Template.Annotations["container.security.privileged"] == "" {
+					t.Error("expected annotation 'container.security.privileged' present")
+				}
+			},
+		},
+		{
+			name:     "subIssue 1: running as root",
+			subIssue: 1,
+			verify: func(t *testing.T, dep *appsv1.Deployment) {
+				container := &dep.Spec.Template.Spec.Containers[0]
+				if container.SecurityContext == nil || container.SecurityContext.RunAsUser == nil || *container.SecurityContext.RunAsUser != 0 {
+					t.Error("expected RunAsUser == 0")
+				}
+				if container.SecurityContext.RunAsNonRoot == nil || *container.SecurityContext.RunAsNonRoot {
+					t.Error("expected RunAsNonRoot == false")
+				}
+			},
+		},
+		{
+			name:     "subIssue 2: dangerous capabilities",
+			subIssue: 2,
+			verify: func(t *testing.T, dep *appsv1.Deployment) {
+				container := &dep.Spec.Template.Spec.Containers[0]
+				if container.SecurityContext == nil || container.SecurityContext.Capabilities == nil {
+					t.Fatal("expected Capabilities to be set")
+				}
+				caps := container.SecurityContext.Capabilities.Add
+				hasSysAdmin := false
+				hasNetAdmin := false
+				for _, cap := range caps {
+					if cap == "SYS_ADMIN" {
+						hasSysAdmin = true
+					}
+					if cap == "NET_ADMIN" {
+						hasNetAdmin = true
+					}
+				}
+				if !hasSysAdmin || !hasNetAdmin {
+					t.Errorf("expected Capabilities.Add to contain SYS_ADMIN and NET_ADMIN, got %v", caps)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			namespace := "test-k01-deterministic"
+			appStack := baseline.GetAppStack(namespace)
+
+			err := applyK01ToStack(appStack, "api", &tt.subIssue, nil)
+			if err != nil {
+				t.Fatalf("applyK01ToStack failed: %v", err)
+			}
+
+			dep := findDeployment(appStack, "api")
+			if dep == nil {
+				t.Fatal("could not find api deployment")
+			}
+
+			tt.verify(t, dep)
+		})
+	}
+}
+
+func TestK03SubIssueSelection(t *testing.T) {
+	tests := []struct {
+		name     string
+		subIssue int
+		verify   func(*testing.T, []client.Object, string)
+	}{
+		{
+			name:     "subIssue 0: namespace overpermissive",
+			subIssue: 0,
+			verify: func(t *testing.T, stack []client.Object, ns string) {
+				foundRole := false
+				foundBinding := false
+				for _, obj := range stack {
+					if role, ok := obj.(*rbacv1.Role); ok && role.Name == fmt.Sprintf("%s-overpermissive", ns) {
+						foundRole = true
+					}
+					if binding, ok := obj.(*rbacv1.RoleBinding); ok && binding.Name == fmt.Sprintf("%s-overpermissive-binding", ns) {
+						foundBinding = true
+					}
+				}
+				if !foundRole {
+					t.Error("expected Role with name '<ns>-overpermissive'")
+				}
+				if !foundBinding {
+					t.Error("expected RoleBinding with name '<ns>-overpermissive-binding'")
+				}
+			},
+		},
+		{
+			name:     "subIssue 1: default service account permissions",
+			subIssue: 1,
+			verify: func(t *testing.T, stack []client.Object, ns string) {
+				foundRole := false
+				foundBinding := false
+				for _, obj := range stack {
+					if role, ok := obj.(*rbacv1.Role); ok && role.Name == fmt.Sprintf("%s-default-permissions", ns) {
+						foundRole = true
+					}
+					if binding, ok := obj.(*rbacv1.RoleBinding); ok && binding.Name == fmt.Sprintf("%s-default-binding", ns) {
+						foundBinding = true
+					}
+				}
+				if !foundRole {
+					t.Error("expected Role with name '<ns>-default-permissions'")
+				}
+				if !foundBinding {
+					t.Error("expected RoleBinding with name '<ns>-default-binding'")
+				}
+			},
+		},
+		{
+			name:     "subIssue 2: excessive secrets access",
+			subIssue: 2,
+			verify: func(t *testing.T, stack []client.Object, ns string) {
+				foundRole := false
+				foundBinding := false
+				for _, obj := range stack {
+					if role, ok := obj.(*rbacv1.Role); ok && role.Name == fmt.Sprintf("%s-secrets-reader", ns) {
+						foundRole = true
+					}
+					if binding, ok := obj.(*rbacv1.RoleBinding); ok && binding.Name == fmt.Sprintf("%s-secrets-binding", ns) {
+						foundBinding = true
+					}
+				}
+				if !foundRole {
+					t.Error("expected Role with name '<ns>-secrets-reader'")
+				}
+				if !foundBinding {
+					t.Error("expected RoleBinding with name '<ns>-secrets-binding'")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			namespace := "test-k03-deterministic"
+			appStack := baseline.GetAppStack(namespace)
+
+			err := applyK03ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
+			if err != nil {
+				t.Fatalf("applyK03ToStack failed: %v", err)
+			}
+
+			tt.verify(t, appStack, namespace)
+		})
+	}
+}
+
+func TestK06SubIssueSelection(t *testing.T) {
+	tests := []struct {
+		name     string
+		subIssue int
+		verify   func(*testing.T, *appsv1.Deployment)
+	}{
+		{
+			name:     "subIssue 0: default service account usage",
+			subIssue: 0,
+			verify: func(t *testing.T, dep *appsv1.Deployment) {
+				if dep.Spec.Template.Spec.ServiceAccountName != "" {
+					t.Errorf("expected ServiceAccountName == \"\", got %q", dep.Spec.Template.Spec.ServiceAccountName)
+				}
+			},
+		},
+		{
+			name:     "subIssue 1: auto-mount service account token",
+			subIssue: 1,
+			verify: func(t *testing.T, dep *appsv1.Deployment) {
+				if dep.Spec.Template.Spec.AutomountServiceAccountToken == nil || !*dep.Spec.Template.Spec.AutomountServiceAccountToken {
+					t.Error("expected AutomountServiceAccountToken == true")
+				}
+			},
+		},
+		{
+			name:     "subIssue 2: missing fsGroup",
+			subIssue: 2,
+			verify: func(t *testing.T, dep *appsv1.Deployment) {
+				if dep.Spec.Template.Spec.SecurityContext != nil && dep.Spec.Template.Spec.SecurityContext.FSGroup != nil {
+					t.Error("expected SecurityContext != nil but FSGroup == nil")
+				}
+			},
+		},
+		{
+			name:     "subIssue 3: root user with volume access",
+			subIssue: 3,
+			verify: func(t *testing.T, dep *appsv1.Deployment) {
+				foundRootUser := false
+				for _, cont := range dep.Spec.Template.Spec.Containers {
+					if cont.SecurityContext != nil && cont.SecurityContext.RunAsUser != nil && *cont.SecurityContext.RunAsUser == 0 {
+						foundRootUser = true
+						break
+					}
+				}
+				if !foundRootUser {
+					t.Error("expected at least one container with RunAsUser == 0")
+				}
+			},
+		},
+		{
+			name:     "subIssue 4: privileged container with volume access",
+			subIssue: 4,
+			verify: func(t *testing.T, dep *appsv1.Deployment) {
+				foundPrivileged := false
+				for _, cont := range dep.Spec.Template.Spec.Containers {
+					if cont.SecurityContext != nil && cont.SecurityContext.Privileged != nil && *cont.SecurityContext.Privileged {
+						foundPrivileged = true
+						break
+					}
+				}
+				if !foundPrivileged {
+					t.Error("expected at least one container with Privileged == true")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			namespace := "test-k06-deterministic"
+			appStack := baseline.GetAppStack(namespace)
+
+			err := applyK06ToStack(appStack, "api", &tt.subIssue, nil)
+			if err != nil {
+				t.Fatalf("applyK06ToStack failed: %v", err)
+			}
+
+			dep := findDeployment(appStack, "api")
+			if dep == nil {
+				t.Fatal("could not find api deployment")
+			}
+
+			tt.verify(t, dep)
+		})
+	}
+}
+
+func TestK07SubIssueSelection(t *testing.T) {
+	tests := []struct {
+		name     string
+		subIssue int
+		verify   func(*testing.T, []client.Object)
+	}{
+		{
+			name:     "subIssue 0: no NetworkPolicy",
+			subIssue: 0,
+			verify: func(t *testing.T, stack []client.Object) {
+				for _, obj := range stack {
+					if _, ok := obj.(*networkingv1.NetworkPolicy); ok {
+						t.Error("expected no NetworkPolicy in stack")
+					}
+				}
+			},
+		},
+		{
+			name:     "subIssue 1: allow-all NetworkPolicy",
+			subIssue: 1,
+			verify: func(t *testing.T, stack []client.Object) {
+				found := false
+				for _, obj := range stack {
+					if np, ok := obj.(*networkingv1.NetworkPolicy); ok && np.Name == "allow-all-traffic" {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Error("expected NetworkPolicy named 'allow-all-traffic'")
+				}
+			},
+		},
+		{
+			name:     "subIssue 2: postgres-service is NodePort",
+			subIssue: 2,
+			verify: func(t *testing.T, stack []client.Object) {
+				svc := findService(stack, "postgres-service")
+				if svc == nil {
+					t.Fatal("could not find postgres-service")
+				}
+				if svc.Spec.Type != corev1.ServiceTypeNodePort {
+					t.Errorf("expected postgres-service Type == NodePort, got %s", svc.Spec.Type)
+				}
+				// Check for NodePort 30432
+				foundNodePort := false
+				for _, port := range svc.Spec.Ports {
+					if port.NodePort == 30432 {
+						foundNodePort = true
+						break
+					}
+				}
+				if !foundNodePort {
+					t.Error("expected postgres-service to have NodePort 30432")
+				}
+			},
+		},
+		{
+			name:     "subIssue 3: postgres-service is LoadBalancer",
+			subIssue: 3,
+			verify: func(t *testing.T, stack []client.Object) {
+				svc := findService(stack, "postgres-service")
+				if svc == nil {
+					t.Fatal("could not find postgres-service")
+				}
+				if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
+					t.Errorf("expected postgres-service Type == LoadBalancer, got %s", svc.Spec.Type)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			namespace := "test-k07-deterministic"
+			appStack := baseline.GetAppStack(namespace)
+
+			err := applyK07ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
+			if err != nil {
+				t.Fatalf("applyK07ToStack failed: %v", err)
+			}
+
+			tt.verify(t, appStack)
+		})
+	}
+}
+
+func TestK08SubIssueSelection(t *testing.T) {
+	tests := []struct {
+		name     string
+		subIssue int
+		verify   func(*testing.T, []client.Object, *appsv1.Deployment)
+	}{
+		{
+			name:     "subIssue 0: secrets in ConfigMap",
+			subIssue: 0,
+			verify: func(t *testing.T, stack []client.Object, dep *appsv1.Deployment) {
+				foundConfigMap := false
+				for _, obj := range stack {
+					if cm, ok := obj.(*corev1.ConfigMap); ok && cm.Name == "api-config" {
+						foundConfigMap = true
+						// Check for secret data keys
+						if _, ok := cm.Data["jwt-secret"]; !ok {
+							t.Error("expected ConfigMap to contain 'jwt-secret' key")
+						}
+					}
+				}
+				if !foundConfigMap {
+					t.Error("expected ConfigMap named 'api-config'")
+				}
+				// Check that deployment envs reference the ConfigMap
+				container := &dep.Spec.Template.Spec.Containers[0]
+				foundConfigEnv := false
+				for _, env := range container.Env {
+					if env.ValueFrom != nil && env.ValueFrom.ConfigMapKeyRef != nil {
+						foundConfigEnv = true
+						break
+					}
+				}
+				if !foundConfigEnv {
+					t.Error("expected deployment to reference ConfigMap in env vars")
+				}
+			},
+		},
+		{
+			name:     "subIssue 1: hardcoded secrets as env vars",
+			subIssue: 1,
+			verify: func(t *testing.T, stack []client.Object, dep *appsv1.Deployment) {
+				container := &dep.Spec.Template.Spec.Containers[0]
+				foundJWT := false
+				foundAPIKey := false
+				foundRedis := false
+				for _, env := range container.Env {
+					if env.Name == "JWT_SECRET" && env.Value != "" {
+						foundJWT = true
+					}
+					if env.Name == "API_KEY" && env.Value != "" {
+						foundAPIKey = true
+					}
+					if env.Name == "REDIS_PASSWORD" && env.Value != "" {
+						foundRedis = true
+					}
+				}
+				if !foundJWT || !foundAPIKey || !foundRedis {
+					t.Error("expected container to have literal JWT_SECRET, API_KEY, and REDIS_PASSWORD env vars")
+				}
+			},
+		},
+		{
+			name:     "subIssue 2: insecure volume permissions",
+			subIssue: 2,
+			verify: func(t *testing.T, stack []client.Object, dep *appsv1.Deployment) {
+				foundInsecureVolume := false
+				for _, volume := range dep.Spec.Template.Spec.Volumes {
+					if volume.Secret != nil && volume.Secret.DefaultMode != nil {
+						mode := *volume.Secret.DefaultMode
+						if mode == 0644 {
+							foundInsecureVolume = true
+							break
+						}
+					}
+				}
+				if !foundInsecureVolume {
+					t.Error("expected Secret volume with DefaultMode == 0644")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			namespace := "test-k08-deterministic"
+			appStack := baseline.GetAppStack(namespace)
+
+			err := applyK08ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
+			if err != nil {
+				t.Fatalf("applyK08ToStack failed: %v", err)
+			}
+
+			dep := findDeployment(appStack, "api")
+			if dep == nil {
+				t.Fatal("could not find api deployment")
+			}
+
+			tt.verify(t, appStack, dep)
+		})
+	}
+}
+
+// Error-case tests
+
+func TestK01SubIssueOutOfRange(t *testing.T) {
+	namespace := "test-k01-errors"
+	appStack := baseline.GetAppStack(namespace)
+
+	// Test subIssue -1
+	invalidSub := -1
+	err := applyK01ToStack(appStack, "api", &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue -1")
+	}
+
+	// Test subIssue 3
+	invalidSub = 3
+	err = applyK01ToStack(appStack, "api", &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue 3")
+	}
+}
+
+func TestK01TargetNotFound(t *testing.T) {
+	namespace := "test-k01-errors"
+	appStack := baseline.GetAppStack(namespace)
+
+	err := applyK01ToStack(appStack, "nonexistent-deployment", nil, nil)
+	if err == nil {
+		t.Error("expected error for nonexistent deployment")
+	}
+}
+
+func TestK03SubIssueOutOfRange(t *testing.T) {
+	namespace := "test-k03-errors"
+	appStack := baseline.GetAppStack(namespace)
+
+	// Test subIssue -1
+	invalidSub := -1
+	err := applyK03ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue -1")
+	}
+
+	// Test subIssue 3
+	invalidSub = 3
+	err = applyK03ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue 3")
+	}
+}
+
+func TestK03TargetNotFound(t *testing.T) {
+	namespace := "test-k03-errors"
+	appStack := baseline.GetAppStack(namespace)
+
+	err := applyK03ToStack(&appStack, "nonexistent-deployment", namespace, nil, nil)
+	if err == nil {
+		t.Error("expected error for nonexistent deployment")
+	}
+}
+
+func TestK06SubIssueOutOfRange(t *testing.T) {
+	namespace := "test-k06-errors"
+	appStack := baseline.GetAppStack(namespace)
+
+	// Test subIssue -1
+	invalidSub := -1
+	err := applyK06ToStack(appStack, "api", &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue -1")
+	}
+
+	// Test subIssue 5
+	invalidSub = 5
+	err = applyK06ToStack(appStack, "api", &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue 5")
+	}
+}
+
+func TestK06TargetNotFound(t *testing.T) {
+	namespace := "test-k06-errors"
+	appStack := baseline.GetAppStack(namespace)
+
+	err := applyK06ToStack(appStack, "nonexistent-deployment", nil, nil)
+	if err == nil {
+		t.Error("expected error for nonexistent deployment")
+	}
+}
+
+func TestK07SubIssueOutOfRange(t *testing.T) {
+	namespace := "test-k07-errors"
+	appStack := baseline.GetAppStack(namespace)
+
+	// Test subIssue -1
+	invalidSub := -1
+	err := applyK07ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue -1")
+	}
+
+	// Test subIssue 4
+	invalidSub = 4
+	err = applyK07ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue 4")
+	}
+}
+
+func TestK08SubIssueOutOfRange(t *testing.T) {
+	namespace := "test-k08-errors"
+	appStack := baseline.GetAppStack(namespace)
+
+	// Test subIssue -1
+	invalidSub := -1
+	err := applyK08ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue -1")
+	}
+
+	// Test subIssue 3
+	invalidSub = 3
+	err = applyK08ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue 3")
+	}
+}
+
+func TestK08TargetNotFound(t *testing.T) {
+	namespace := "test-k08-errors"
+	appStack := baseline.GetAppStack(namespace)
+
+	subIssue := 1 // Use subIssue 1 since it directly modifies the deployment
+	err := applyK08ToStack(&appStack, "nonexistent-deployment", namespace, &subIssue, nil)
+	if err == nil {
+		t.Error("expected error for nonexistent deployment")
 	}
 }
 
