@@ -49,6 +49,12 @@ $ kubescape scan --include-namespaces test-lab
 $ kubescape scan workload Deployment/<deployment-name> --include-namespaces test-lab
 ```
 
+- scan with kubescape using one of the built-in frameworks (nsa/mitre)
+```sh
+$ kubescape scan mitre --include-namespaces -n test-lab
+```
+> some of the vulnerabilities don't show up in the stock kubescape scan, so if you don't see something in one of the above scans, try each of the frameworks.
+
 - scan all the deployment yaml manifests with kube-score (this one has to scan file contents, so it's a bit gnarly)
 ```sh
 $ kubectl api-resources --verbs=list --namespaced -o name \
@@ -60,39 +66,42 @@ $ kubectl api-resources --verbs=list --namespaced -o name \
 
 Each vulnerability category has multiple sub-issues that are randomly selected:
 
-- K01 (Insecure Workload Configurations) - 3 sub-issues:
+- K01 (Insecure Workload Configurations) - 6 sub-issues:
 
-  1. Privileged container - Sets privileged: true
-  2. Running as root - Sets runAsUser: 0
-  3. Dangerous capabilities - Adds SYS_ADMIN, NET_ADMIN capabilities
+  1. Privileged container - Sets privileged: true (Kubescape C-0057)
+  2. Running as root - Sets runAsUser: 0 (Kubescape C-0013)
+  3. Dangerous capabilities - Adds SYS_ADMIN, NET_ADMIN capabilities (Kubescape C-0046)
+  4. Missing fsGroup - Removes fsGroup from PodSecurityContext (Kubescape C-0211)
+  5. ReadOnlyRootFilesystem disabled - Sets readOnlyRootFilesystem: false (Kubescape C-0017)
+  6. Missing resource limits - Removes CPU/memory resource limits (Kubescape C-0009, C-0004)
 
-- K03 (Overly Permissive RBAC) - 3 sub-issues:
+- K03 (Overly Permissive RBAC) - 4 sub-issues:
 
   1. Namespace Overpermissive Access - Grants excessive permissions within namespace (secrets, configmaps, deployments)
   2. Default Service Account Permissions - Grants unnecessary create/list/watch permissions to service account
   3. Excessive Secrets Access - Grants broad secret read and pod delete permissions within namespace
+  4. ClusterRoleBinding to cluster-admin - Binds service account to cluster-admin ClusterRole (Kubescape C-0185)
 
-- K06 (Broken Authentication) - 6 sub-issues:
+- K06 (Broken Authentication) - 3 sub-issues:
 
-  1. Default service account usage - Removes explicit serviceAccountName
-  2. Service account token annotation - Adds token requirement annotation
-  3. Default service account annotation - Adds temporary account annotation
-  4. Missing fsGroup in PodSecurityContext - Creates PodSecurityContext without fsGroup
-  5. Root user with volume access - Sets runAsUser: 0 (detected by Kubescape C-0013)
-  6. Privileged container with volume access - Sets privileged: true (detected by Kubescape C-0016)
+  1. Default service account usage - Removes explicit serviceAccountName (kubeaudit ASAT)
+  2. Auto-mount service account token - Enables automountServiceAccountToken (Kubescape C-0034, kubeaudit)
+  3. Permissive SA with automount - Creates unrestricted ServiceAccount with automount enabled (Kubescape C-0034)
 
-- K07 (Missing Network Segmentation) - 4 sub-issues:
+- K07 (Missing Network Segmentation) - 5 sub-issues:
 
-  1. Unrestricted pod-to-pod communication - Adds network policy disabled annotation
-  2. Network isolation disabled - Adds isolation disabled annotation
-  3. Database exposure - Changes PostgreSQL service to NodePort
-  4. Service exposure annotation - Adds external database access annotation
+  1. Unrestricted pod-to-pod communication - Deletes network policy entirely (Kubescape C-0260)
+  2. Network isolation disabled - Creates allow-all-traffic NetworkPolicy (Kubescape C-0030)
+  3. Database exposure via NodePort - Changes PostgreSQL service to NodePort:30432
+  4. Database exposure via LoadBalancer - Changes PostgreSQL service to LoadBalancer
+  5. Overly permissive egress - Replaces egress rules in api-network-policy with allow-all (Kubescape C-0030)
 
-- K08 (Secrets Management Failures) - 3 sub-issues:
+- K08 (Secrets Management Failures) - 4 sub-issues:
 
-  1. Secret data in ConfigMaps - Stores sensitive data in ConfigMap instead of Secret
-  2. Hardcoded secrets annotation - Adds development mode annotation
-  3. Insecure volume permissions - Adds debugging enabled annotation
+  1. Secret data in ConfigMaps - Stores sensitive data in ConfigMap instead of Secret (Kubescape C-0012)
+  2. Hardcoded secrets in env vars - Adds literal secret values as environment variables (Kubescape C-0012, kubeaudit)
+  3. Insecure volume permissions - Mounts secret volume with world-readable mode 0644 (kubeaudit)
+  4. Secret data in pod annotations - Adds sensitive data (API keys, passwords) as pod template annotations (Kubescape C-0012)
 
 
 

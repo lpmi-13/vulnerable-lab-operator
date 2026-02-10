@@ -20,10 +20,10 @@ import (
 
 // Helper functions for finding resources in stacks
 
-// findDeployment finds a deployment by name in the given stack
-func findDeployment(stack []client.Object, name string) *appsv1.Deployment {
+// findDeployment finds the api deployment in the given stack
+func findDeployment(stack []client.Object) *appsv1.Deployment {
 	for _, obj := range stack {
-		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == name {
+		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
 			return dep
 		}
 	}
@@ -40,6 +40,65 @@ func findService(stack []client.Object, name string) *corev1.Service {
 	return nil
 }
 
+// countK01Changes counts the number of K01-relevant workload configuration changes
+func countK01Changes(originalDep, modifiedDep *appsv1.Deployment) int {
+	container := &modifiedDep.Spec.Template.Spec.Containers[0]
+	originalContainer := &originalDep.Spec.Template.Spec.Containers[0]
+	changesCount := 0
+
+	// Check privileged flag (sub-issue 0)
+	origPriv := originalContainer.SecurityContext != nil && originalContainer.SecurityContext.Privileged != nil && *originalContainer.SecurityContext.Privileged
+	modPriv := container.SecurityContext != nil && container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged
+	if origPriv != modPriv {
+		changesCount++
+	}
+
+	// Check runAsUser (sub-issue 1)
+	origUser := int64(65532)
+	if originalContainer.SecurityContext != nil && originalContainer.SecurityContext.RunAsUser != nil {
+		origUser = *originalContainer.SecurityContext.RunAsUser
+	}
+	modUser := origUser
+	if container.SecurityContext != nil && container.SecurityContext.RunAsUser != nil {
+		modUser = *container.SecurityContext.RunAsUser
+	}
+	if origUser != modUser {
+		changesCount++
+	}
+
+	// Check capabilities (sub-issue 2)
+	origCaps := 0
+	modCaps := 0
+	if originalContainer.SecurityContext != nil && originalContainer.SecurityContext.Capabilities != nil {
+		origCaps = len(originalContainer.SecurityContext.Capabilities.Add)
+	}
+	if container.SecurityContext != nil && container.SecurityContext.Capabilities != nil {
+		modCaps = len(container.SecurityContext.Capabilities.Add)
+	}
+	if origCaps != modCaps {
+		changesCount++
+	}
+
+	// Check hostPID enabled (sub-issue 3): baseline has hostPID=false, vulnerability sets it true
+	if !originalDep.Spec.Template.Spec.HostPID && modifiedDep.Spec.Template.Spec.HostPID {
+		changesCount++
+	}
+
+	// Check readOnlyRootFilesystem disabled (sub-issue 4)
+	origROFSFalse := originalContainer.SecurityContext != nil && originalContainer.SecurityContext.ReadOnlyRootFilesystem != nil && !*originalContainer.SecurityContext.ReadOnlyRootFilesystem
+	modROFSFalse := container.SecurityContext != nil && container.SecurityContext.ReadOnlyRootFilesystem != nil && !*container.SecurityContext.ReadOnlyRootFilesystem
+	if origROFSFalse != modROFSFalse {
+		changesCount++
+	}
+
+	// Check resource limits removed (sub-issue 5)
+	if (len(originalContainer.Resources.Limits) > 0) != (len(container.Resources.Limits) > 0) {
+		changesCount++
+	}
+
+	return changesCount
+}
+
 func TestK01MakesFocusedChanges(t *testing.T) {
 	namespace := "test-k01-focused"
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -47,7 +106,6 @@ func TestK01MakesFocusedChanges(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		appStack := baseline.GetAppStack(namespace)
 
-		// Find the target deployment before applying K01
 		var originalDep *appsv1.Deployment
 		for _, obj := range appStack {
 			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
@@ -55,69 +113,21 @@ func TestK01MakesFocusedChanges(t *testing.T) {
 				break
 			}
 		}
-
 		if originalDep == nil {
 			t.Fatal("Could not find api deployment in baseline stack")
 		}
 
-		err := applyK01ToStack(appStack, "api", nil, rng)
-		if err != nil {
+		if _, err := applyK01ToStack(appStack, "api", nil, rng); err != nil {
 			t.Fatalf("applyK01ToStack failed: %v", err)
 		}
 
-		// Find the modified deployment
-		var modifiedDep *appsv1.Deployment
-		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
-				modifiedDep = dep
-				break
-			}
-		}
-
+		modifiedDep := findDeployment(appStack)
 		if modifiedDep == nil {
 			t.Fatal("Could not find api deployment after K01 application")
 		}
 
-		// Check that exactly one security context change was made
-		container := &modifiedDep.Spec.Template.Spec.Containers[0]
-		originalContainer := &originalDep.Spec.Template.Spec.Containers[0]
-
-		changesCount := 0
-
-		// Check privileged flag
-		if (container.SecurityContext != nil && container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged) !=
-			(originalContainer.SecurityContext != nil && originalContainer.SecurityContext.Privileged != nil && *originalContainer.SecurityContext.Privileged) {
-			changesCount++
-		}
-
-		// Check runAsUser
-		origUser := int64(65532) // default from baseline
-		if originalContainer.SecurityContext != nil && originalContainer.SecurityContext.RunAsUser != nil {
-			origUser = *originalContainer.SecurityContext.RunAsUser
-		}
-		modUser := origUser
-		if container.SecurityContext != nil && container.SecurityContext.RunAsUser != nil {
-			modUser = *container.SecurityContext.RunAsUser
-		}
-		if origUser != modUser {
-			changesCount++
-		}
-
-		// Check capabilities
-		origCaps := 0
-		modCaps := 0
-		if originalContainer.SecurityContext != nil && originalContainer.SecurityContext.Capabilities != nil {
-			origCaps = len(originalContainer.SecurityContext.Capabilities.Add)
-		}
-		if container.SecurityContext != nil && container.SecurityContext.Capabilities != nil {
-			modCaps = len(container.SecurityContext.Capabilities.Add)
-		}
-		if origCaps != modCaps {
-			changesCount++
-		}
-
-		if changesCount != 1 {
-			t.Errorf("K01 should make exactly 1 security context change, but made %d changes", changesCount)
+		if changesCount := countK01Changes(originalDep, modifiedDep); changesCount != 1 {
+			t.Errorf("K01 should make exactly 1 workload configuration change, but made %d changes", changesCount)
 		}
 	}
 }
@@ -130,7 +140,7 @@ func TestK03MakesFocusedChanges(t *testing.T) {
 		appStack := baseline.GetAppStack(namespace)
 		originalStackSize := len(appStack)
 
-		err := applyK03ToStack(&appStack, "api", namespace, nil, rng)
+		_, err := applyK03ToStack(&appStack, "api", namespace, nil, rng)
 		if err != nil {
 			t.Fatalf("applyK03ToStack failed: %v", err)
 		}
@@ -187,7 +197,7 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 			t.Fatal("Could not find api deployment in baseline stack")
 		}
 
-		err := applyK06ToStack(appStack, "api", nil, rng)
+		_, err := applyK06ToStack(&appStack, "api", namespace, nil, rng)
 		if err != nil {
 			t.Fatalf("applyK06ToStack failed: %v", err)
 		}
@@ -208,47 +218,13 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 		// Check that at least ONE K06 authentication vulnerability was applied
 		vulnerabilityFound := false
 
-		// Check 1: Service account name removed (default service account usage)
+		// Check 1: Service account name removed (default service account usage - K06:0)
 		if modifiedDep.Spec.Template.Spec.ServiceAccountName == "" && originalDep.Spec.Template.Spec.ServiceAccountName != "" {
 			vulnerabilityFound = true
 			t.Logf("K06 iteration %d: Applied default service account usage", i)
 		}
 
-		// Check 2: Environment variables changed (hardcoded credentials or exposed auth)
-		if len(modifiedDep.Spec.Template.Spec.Containers[0].Env) != len(originalDep.Spec.Template.Spec.Containers[0].Env) {
-			vulnerabilityFound = true
-			t.Logf("K06 iteration %d: Applied environment variable changes", i)
-		} else {
-			// Check for changes in existing env vars
-			for j, modEnv := range modifiedDep.Spec.Template.Spec.Containers[0].Env {
-				if j < len(originalDep.Spec.Template.Spec.Containers[0].Env) {
-					origEnv := originalDep.Spec.Template.Spec.Containers[0].Env[j]
-					if modEnv.Value != origEnv.Value || (modEnv.ValueFrom == nil) != (origEnv.ValueFrom == nil) {
-						vulnerabilityFound = true
-						t.Logf("K06 iteration %d: Applied environment variable modification", i)
-						break
-					}
-				}
-			}
-		}
-
-		// Check 3: Service account token annotation
-		if modifiedDep.Spec.Template.Annotations != nil {
-			if _, exists := modifiedDep.Spec.Template.Annotations["kubernetes.io/service-account.token"]; exists {
-				vulnerabilityFound = true
-				t.Logf("K06 iteration %d: Applied service account token annotation", i)
-			}
-		}
-
-		// Check 4: Default service account annotation
-		if modifiedDep.Spec.Template.Annotations != nil {
-			if _, exists := modifiedDep.Spec.Template.Annotations["auth.kubernetes.io/default-account"]; exists {
-				vulnerabilityFound = true
-				t.Logf("K06 iteration %d: Applied default service account annotation", i)
-			}
-		}
-
-		// Check: AutomountServiceAccountToken enabled
+		// Check 2: AutomountServiceAccountToken enabled (K06:1)
 		if modifiedDep.Spec.Template.Spec.AutomountServiceAccountToken != nil &&
 			*modifiedDep.Spec.Template.Spec.AutomountServiceAccountToken &&
 			(originalDep.Spec.Template.Spec.AutomountServiceAccountToken == nil ||
@@ -257,30 +233,22 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 			t.Logf("K06 iteration %d: Applied auto-mount service account token", i)
 		}
 
-		// Check 5: Missing fsGroup in PodSecurityContext (new storage-related vuln)
-		// This vulnerability creates a PodSecurityContext without fsGroup
-		if modifiedDep.Spec.Template.Spec.SecurityContext != nil &&
-			(originalDep.Spec.Template.Spec.SecurityContext == nil ||
-				modifiedDep.Spec.Template.Spec.SecurityContext.FSGroup == nil) {
-			vulnerabilityFound = true
-			t.Logf("K06 iteration %d: Applied missing fsGroup vulnerability", i)
-		}
-
-		// Check 6: Root user with volume access (new storage-related vuln)
-		for _, cont := range modifiedDep.Spec.Template.Spec.Containers {
-			if cont.SecurityContext != nil && cont.SecurityContext.RunAsUser != nil && *cont.SecurityContext.RunAsUser == 0 {
-				vulnerabilityFound = true
-				t.Logf("K06 iteration %d: Applied root user with volume access vulnerability", i)
-				break
+		// Check 3: Permissive SA with automount (K06:2)
+		// Check if unrestricted-sa was created and assigned
+		if modifiedDep.Spec.Template.Spec.ServiceAccountName == unrestrictedSAName {
+			// Verify the SA was added to the stack
+			saFound := false
+			for _, obj := range appStack {
+				if sa, ok := obj.(*corev1.ServiceAccount); ok && sa.Name == unrestrictedSAName {
+					if sa.AutomountServiceAccountToken != nil && *sa.AutomountServiceAccountToken {
+						saFound = true
+						break
+					}
+				}
 			}
-		}
-
-		// Check 7: Privileged container with volume access (new storage-related vuln)
-		for _, cont := range modifiedDep.Spec.Template.Spec.Containers {
-			if cont.SecurityContext != nil && cont.SecurityContext.Privileged != nil && *cont.SecurityContext.Privileged {
+			if saFound {
 				vulnerabilityFound = true
-				t.Logf("K06 iteration %d: Applied privileged container with volume access vulnerability", i)
-				break
+				t.Logf("K06 iteration %d: Applied permissive service account with automount", i)
 			}
 		}
 
@@ -290,6 +258,30 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 	}
 }
 
+// detectK07NetworkPolicyVulnerability checks for K07 network policy related vulnerabilities
+func detectK07NetworkPolicyVulnerability(appStack []client.Object) (bool, string) {
+	hasNetworkPolicy := false
+	for _, obj := range appStack {
+		if np, ok := obj.(*networkingv1.NetworkPolicy); ok {
+			hasNetworkPolicy = true
+			if np.Name == "allow-all-traffic" {
+				return true, "Added allow-all NetworkPolicy"
+			}
+			if np.Name == "api-network-policy" {
+				for _, egress := range np.Spec.Egress {
+					if len(egress.To) == 0 {
+						return true, "Applied overly permissive egress in network policy"
+					}
+				}
+			}
+		}
+	}
+	if !hasNetworkPolicy {
+		return true, "Removed NetworkPolicy from stack"
+	}
+	return false, ""
+}
+
 func TestK07MakesFocusedChanges(t *testing.T) {
 	namespace := "test-k07-focused"
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -297,44 +289,25 @@ func TestK07MakesFocusedChanges(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		appStack := baseline.GetAppStack(namespace)
 
-		// Find the original deployment and postgres service state
-		var originalDep *appsv1.Deployment
 		var originalPostgresSvc *corev1.Service
 		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
-				originalDep = dep.DeepCopy()
-			}
 			if svc, ok := obj.(*corev1.Service); ok && svc.Name == "postgres-service" {
 				originalPostgresSvc = svc.DeepCopy()
 			}
-		}
-
-		if originalDep == nil {
-			t.Fatal("Could not find api deployment in baseline stack")
 		}
 		if originalPostgresSvc == nil {
 			t.Fatal("Could not find postgres-service in baseline stack")
 		}
 
-		err := applyK07ToStack(&appStack, "api", namespace, nil, rng)
-		if err != nil {
+		if _, err := applyK07ToStack(&appStack, "api", namespace, nil, rng); err != nil {
 			t.Fatalf("applyK07ToStack failed: %v", err)
 		}
 
-		// Find the modified resources
-		var modifiedDep *appsv1.Deployment
 		var modifiedPostgresSvc *corev1.Service
 		for _, obj := range appStack {
-			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
-				modifiedDep = dep
-			}
 			if svc, ok := obj.(*corev1.Service); ok && svc.Name == "postgres-service" {
 				modifiedPostgresSvc = svc
 			}
-		}
-
-		if modifiedDep == nil {
-			t.Fatal("Could not find api deployment after K07 application")
 		}
 		if modifiedPostgresSvc == nil {
 			t.Fatal("Could not find postgres-service after K07 application")
@@ -342,36 +315,17 @@ func TestK07MakesFocusedChanges(t *testing.T) {
 
 		vulnerabilityFound := false
 
-		// Check Case 0: NetworkPolicy removed from stack
-		hasNetworkPolicy := false
-		for _, obj := range appStack {
-			if _, ok := obj.(*networkingv1.NetworkPolicy); ok {
-				hasNetworkPolicy = true
-				break
-			}
-		}
-		// Baseline should have a NetworkPolicy; if it's gone, case 0 was applied
-		if !hasNetworkPolicy {
+		// Check cases 0, 1, 4: network policy changes
+		if found, msg := detectK07NetworkPolicyVulnerability(appStack); found {
 			vulnerabilityFound = true
-			t.Logf("K07 iteration %d: Removed NetworkPolicy from stack", i)
+			t.Logf("K07 iteration %d: %s", i, msg)
 		}
 
-		// Check Case 1: Allow-all NetworkPolicy added
-		for _, obj := range appStack {
-			if np, ok := obj.(*networkingv1.NetworkPolicy); ok && np.Name == "allow-all-traffic" {
-				vulnerabilityFound = true
-				t.Logf("K07 iteration %d: Added allow-all NetworkPolicy", i)
-				break
-			}
-		}
-
-		// Check Case 2: Postgres service changed to NodePort
+		// Check Case 2/3: Postgres service exposure
 		if modifiedPostgresSvc.Spec.Type == corev1.ServiceTypeNodePort && originalPostgresSvc.Spec.Type != corev1.ServiceTypeNodePort {
 			vulnerabilityFound = true
 			t.Logf("K07 iteration %d: Applied postgres service NodePort exposure", i)
 		}
-
-		// Check Case 3: Postgres service changed to LoadBalancer
 		if modifiedPostgresSvc.Spec.Type == corev1.ServiceTypeLoadBalancer && originalPostgresSvc.Spec.Type != corev1.ServiceTypeLoadBalancer {
 			vulnerabilityFound = true
 			t.Logf("K07 iteration %d: Applied postgres service LoadBalancer exposure", i)
@@ -383,6 +337,37 @@ func TestK07MakesFocusedChanges(t *testing.T) {
 	}
 }
 
+// detectK08VulnerabilityInDep checks for K08 vulnerabilities in an existing deployment
+func detectK08VulnerabilityInDep(originalDep, modifiedDep *appsv1.Deployment) bool {
+	origEnvs := originalDep.Spec.Template.Spec.Containers[0].Env
+	modEnvs := modifiedDep.Spec.Template.Spec.Containers[0].Env
+
+	// Check for hardcoded secrets replacing SecretKeyRef
+	for j, modEnv := range modEnvs {
+		if j < len(origEnvs) {
+			origEnv := origEnvs[j]
+			if origEnv.ValueFrom != nil && origEnv.ValueFrom.SecretKeyRef != nil && modEnv.ValueFrom == nil && modEnv.Value != "" {
+				return true
+			}
+		}
+	}
+
+	// Check for hardcoded secrets appended as new env vars
+	for j := len(origEnvs); j < len(modEnvs); j++ {
+		if modEnvs[j].Value != "" && modEnvs[j].ValueFrom == nil {
+			return true
+		}
+	}
+
+	// Check for insecure volume permissions
+	if hasInsecureVolumePermissions(modifiedDep.Spec.Template.Spec.Volumes) {
+		return true
+	}
+
+	// Check for secrets in pod template annotations
+	return hasSecretAnnotations(modifiedDep.Spec.Template.Annotations)
+}
+
 func TestK08MakesFocusedChanges(t *testing.T) {
 	namespace := "test-k08-focused"
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -391,7 +376,6 @@ func TestK08MakesFocusedChanges(t *testing.T) {
 		appStack := baseline.GetAppStack(namespace)
 		originalStackSize := len(appStack)
 
-		// Find the original deployment state
 		var originalDep *appsv1.Deployment
 		for _, obj := range appStack {
 			if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
@@ -399,84 +383,27 @@ func TestK08MakesFocusedChanges(t *testing.T) {
 				break
 			}
 		}
-
 		if originalDep == nil {
 			t.Fatal("Could not find api deployment in baseline stack")
 		}
 
-		err := applyK08ToStack(&appStack, "api", namespace, nil, rng)
-		if err != nil {
+		if _, err := applyK08ToStack(&appStack, "api", namespace, nil, rng); err != nil {
 			t.Fatalf("applyK08ToStack failed: %v", err)
 		}
 
-		modifiedStackSize := len(appStack)
 		vulnerabilityFound := false
 
-		// Check if new resources were added (ConfigMap case)
-		if modifiedStackSize > originalStackSize {
+		if len(appStack) > originalStackSize {
 			vulnerabilityFound = true
-			t.Logf("K08 iteration %d: Applied secrets in ConfigMap (added %d resources)", i, modifiedStackSize-originalStackSize)
+			t.Logf("K08 iteration %d: Applied secrets in ConfigMap (added %d resources)", i, len(appStack)-originalStackSize)
 		} else {
-			// Check for modifications to existing deployment
-			var modifiedDep *appsv1.Deployment
-			for _, obj := range appStack {
-				if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == apiDeploymentName {
-					modifiedDep = dep
-					break
-				}
-			}
-
+			modifiedDep := findDeployment(appStack)
 			if modifiedDep == nil {
 				t.Fatal("Could not find api deployment after K08 application")
 			}
-
-			// Check for hardcoded secrets in environment variables
-			for j, modEnv := range modifiedDep.Spec.Template.Spec.Containers[0].Env {
-				if j < len(originalDep.Spec.Template.Spec.Containers[0].Env) {
-					origEnv := originalDep.Spec.Template.Spec.Containers[0].Env[j]
-					// Check if SecretKeyRef was replaced with plain value
-					if origEnv.ValueFrom != nil && origEnv.ValueFrom.SecretKeyRef != nil && modEnv.ValueFrom == nil && modEnv.Value != "" {
-						vulnerabilityFound = true
-						t.Logf("K08 iteration %d: Applied hardcoded secrets in environment", i)
-						break
-					}
-				}
-			}
-
-			// Check for hardcoded secrets appended as new environment variables
-			if len(modifiedDep.Spec.Template.Spec.Containers[0].Env) > len(originalDep.Spec.Template.Spec.Containers[0].Env) {
-				for j := len(originalDep.Spec.Template.Spec.Containers[0].Env); j < len(modifiedDep.Spec.Template.Spec.Containers[0].Env); j++ {
-					env := modifiedDep.Spec.Template.Spec.Containers[0].Env[j]
-					if env.Value != "" && env.ValueFrom == nil {
-						vulnerabilityFound = true
-						t.Logf("K08 iteration %d: Applied hardcoded secrets as new env vars", i)
-						break
-					}
-				}
-			}
-
-			// Check for insecure volume permissions
-			for _, volume := range modifiedDep.Spec.Template.Spec.Volumes {
-				if volume.Secret != nil && volume.Secret.DefaultMode != nil {
-					mode := *volume.Secret.DefaultMode
-					if mode&0077 != 0 { // World or group readable
-						vulnerabilityFound = true
-						t.Logf("K08 iteration %d: Applied insecure volume permissions (mode: %o)", i, mode)
-						break
-					}
-				}
-			}
-
-			// Check for vulnerable annotations
-			if modifiedDep.Spec.Template.Annotations != nil {
-				if _, exists := modifiedDep.Spec.Template.Annotations["config.kubernetes.io/hardcoded-secrets"]; exists {
-					vulnerabilityFound = true
-					t.Logf("K08 iteration %d: Applied hardcoded secrets annotation", i)
-				}
-				if _, exists := modifiedDep.Spec.Template.Annotations["security.kubernetes.io/volume-permissions"]; exists {
-					vulnerabilityFound = true
-					t.Logf("K08 iteration %d: Applied insecure volume permissions annotation", i)
-				}
+			if detectK08VulnerabilityInDep(originalDep, modifiedDep) {
+				vulnerabilityFound = true
+				t.Logf("K08 iteration %d: Applied deployment-level secrets vulnerability", i)
 			}
 		}
 
@@ -551,12 +478,12 @@ func TestK01SubIssueSelection(t *testing.T) {
 			namespace := "test-k01-deterministic"
 			appStack := baseline.GetAppStack(namespace)
 
-			err := applyK01ToStack(appStack, "api", &tt.subIssue, nil)
+			_, err := applyK01ToStack(appStack, "api", &tt.subIssue, nil)
 			if err != nil {
 				t.Fatalf("applyK01ToStack failed: %v", err)
 			}
 
-			dep := findDeployment(appStack, "api")
+			dep := findDeployment(appStack)
 			if dep == nil {
 				t.Fatal("could not find api deployment")
 			}
@@ -645,7 +572,7 @@ func TestK03SubIssueSelection(t *testing.T) {
 			namespace := "test-k03-deterministic"
 			appStack := baseline.GetAppStack(namespace)
 
-			err := applyK03ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
+			_, err := applyK03ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
 			if err != nil {
 				t.Fatalf("applyK03ToStack failed: %v", err)
 			}
@@ -659,12 +586,16 @@ func TestK06SubIssueSelection(t *testing.T) {
 	tests := []struct {
 		name     string
 		subIssue int
-		verify   func(*testing.T, *appsv1.Deployment)
+		verify   func(*testing.T, []client.Object)
 	}{
 		{
 			name:     "subIssue 0: default service account usage",
 			subIssue: 0,
-			verify: func(t *testing.T, dep *appsv1.Deployment) {
+			verify: func(t *testing.T, appStack []client.Object) {
+				dep := findDeployment(appStack)
+				if dep == nil {
+					t.Fatal("could not find api deployment")
+				}
 				if dep.Spec.Template.Spec.ServiceAccountName != "" {
 					t.Errorf("expected ServiceAccountName == \"\", got %q", dep.Spec.Template.Spec.ServiceAccountName)
 				}
@@ -673,50 +604,40 @@ func TestK06SubIssueSelection(t *testing.T) {
 		{
 			name:     "subIssue 1: auto-mount service account token",
 			subIssue: 1,
-			verify: func(t *testing.T, dep *appsv1.Deployment) {
+			verify: func(t *testing.T, appStack []client.Object) {
+				dep := findDeployment(appStack)
+				if dep == nil {
+					t.Fatal("could not find api deployment")
+				}
 				if dep.Spec.Template.Spec.AutomountServiceAccountToken == nil || !*dep.Spec.Template.Spec.AutomountServiceAccountToken {
 					t.Error("expected AutomountServiceAccountToken == true")
 				}
 			},
 		},
 		{
-			name:     "subIssue 2: missing fsGroup",
+			name:     "subIssue 2: permissive SA with automount",
 			subIssue: 2,
-			verify: func(t *testing.T, dep *appsv1.Deployment) {
-				if dep.Spec.Template.Spec.SecurityContext != nil && dep.Spec.Template.Spec.SecurityContext.FSGroup != nil {
-					t.Error("expected SecurityContext != nil but FSGroup == nil")
+			verify: func(t *testing.T, appStack []client.Object) {
+				dep := findDeployment(appStack)
+				if dep == nil {
+					t.Fatal("could not find api deployment")
 				}
-			},
-		},
-		{
-			name:     "subIssue 3: root user with volume access",
-			subIssue: 3,
-			verify: func(t *testing.T, dep *appsv1.Deployment) {
-				foundRootUser := false
-				for _, cont := range dep.Spec.Template.Spec.Containers {
-					if cont.SecurityContext != nil && cont.SecurityContext.RunAsUser != nil && *cont.SecurityContext.RunAsUser == 0 {
-						foundRootUser = true
+				if dep.Spec.Template.Spec.ServiceAccountName != unrestrictedSAName {
+					t.Errorf("expected ServiceAccountName == \"unrestricted-sa\", got %q", dep.Spec.Template.Spec.ServiceAccountName)
+				}
+				// Verify the SA was added to the stack
+				saFound := false
+				for _, obj := range appStack {
+					if sa, ok := obj.(*corev1.ServiceAccount); ok && sa.Name == unrestrictedSAName {
+						if sa.AutomountServiceAccountToken == nil || !*sa.AutomountServiceAccountToken {
+							t.Error("expected SA AutomountServiceAccountToken == true")
+						}
+						saFound = true
 						break
 					}
 				}
-				if !foundRootUser {
-					t.Error("expected at least one container with RunAsUser == 0")
-				}
-			},
-		},
-		{
-			name:     "subIssue 4: privileged container with volume access",
-			subIssue: 4,
-			verify: func(t *testing.T, dep *appsv1.Deployment) {
-				foundPrivileged := false
-				for _, cont := range dep.Spec.Template.Spec.Containers {
-					if cont.SecurityContext != nil && cont.SecurityContext.Privileged != nil && *cont.SecurityContext.Privileged {
-						foundPrivileged = true
-						break
-					}
-				}
-				if !foundPrivileged {
-					t.Error("expected at least one container with Privileged == true")
+				if !saFound {
+					t.Error("expected unrestricted-sa ServiceAccount in stack")
 				}
 			},
 		},
@@ -727,17 +648,12 @@ func TestK06SubIssueSelection(t *testing.T) {
 			namespace := "test-k06-deterministic"
 			appStack := baseline.GetAppStack(namespace)
 
-			err := applyK06ToStack(appStack, "api", &tt.subIssue, nil)
+			_, err := applyK06ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
 			if err != nil {
 				t.Fatalf("applyK06ToStack failed: %v", err)
 			}
 
-			dep := findDeployment(appStack, "api")
-			if dep == nil {
-				t.Fatal("could not find api deployment")
-			}
-
-			tt.verify(t, dep)
+			tt.verify(t, appStack)
 		})
 	}
 }
@@ -819,7 +735,7 @@ func TestK07SubIssueSelection(t *testing.T) {
 			namespace := "test-k07-deterministic"
 			appStack := baseline.GetAppStack(namespace)
 
-			err := applyK07ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
+			_, err := applyK07ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
 			if err != nil {
 				t.Fatalf("applyK07ToStack failed: %v", err)
 			}
@@ -916,12 +832,12 @@ func TestK08SubIssueSelection(t *testing.T) {
 			namespace := "test-k08-deterministic"
 			appStack := baseline.GetAppStack(namespace)
 
-			err := applyK08ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
+			_, err := applyK08ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
 			if err != nil {
 				t.Fatalf("applyK08ToStack failed: %v", err)
 			}
 
-			dep := findDeployment(appStack, "api")
+			dep := findDeployment(appStack)
 			if dep == nil {
 				t.Fatal("could not find api deployment")
 			}
@@ -939,16 +855,16 @@ func TestK01SubIssueOutOfRange(t *testing.T) {
 
 	// Test subIssue -1
 	invalidSub := -1
-	err := applyK01ToStack(appStack, "api", &invalidSub, nil)
+	_, err := applyK01ToStack(appStack, "api", &invalidSub, nil)
 	if err == nil {
 		t.Error("expected error for subIssue -1")
 	}
 
-	// Test subIssue 3
-	invalidSub = 3
-	err = applyK01ToStack(appStack, "api", &invalidSub, nil)
+	// Test subIssue 6 (out of range for K01 which has 0-5)
+	invalidSub = 6
+	_, err = applyK01ToStack(appStack, "api", &invalidSub, nil)
 	if err == nil {
-		t.Error("expected error for subIssue 3")
+		t.Error("expected error for subIssue 6")
 	}
 }
 
@@ -956,7 +872,7 @@ func TestK01TargetNotFound(t *testing.T) {
 	namespace := "test-k01-errors"
 	appStack := baseline.GetAppStack(namespace)
 
-	err := applyK01ToStack(appStack, "nonexistent-deployment", nil, nil)
+	_, err := applyK01ToStack(appStack, "nonexistent-deployment", nil, nil)
 	if err == nil {
 		t.Error("expected error for nonexistent deployment")
 	}
@@ -968,16 +884,16 @@ func TestK03SubIssueOutOfRange(t *testing.T) {
 
 	// Test subIssue -1
 	invalidSub := -1
-	err := applyK03ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	_, err := applyK03ToStack(&appStack, "api", namespace, &invalidSub, nil)
 	if err == nil {
 		t.Error("expected error for subIssue -1")
 	}
 
-	// Test subIssue 3
-	invalidSub = 3
-	err = applyK03ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	// Test subIssue 4 (out of range for K03 which has 0-3)
+	invalidSub = 4
+	_, err = applyK03ToStack(&appStack, "api", namespace, &invalidSub, nil)
 	if err == nil {
-		t.Error("expected error for subIssue 3")
+		t.Error("expected error for subIssue 4")
 	}
 }
 
@@ -985,7 +901,7 @@ func TestK03TargetNotFound(t *testing.T) {
 	namespace := "test-k03-errors"
 	appStack := baseline.GetAppStack(namespace)
 
-	err := applyK03ToStack(&appStack, "nonexistent-deployment", namespace, nil, nil)
+	_, err := applyK03ToStack(&appStack, "nonexistent-deployment", namespace, nil, nil)
 	if err == nil {
 		t.Error("expected error for nonexistent deployment")
 	}
@@ -997,16 +913,16 @@ func TestK06SubIssueOutOfRange(t *testing.T) {
 
 	// Test subIssue -1
 	invalidSub := -1
-	err := applyK06ToStack(appStack, "api", &invalidSub, nil)
+	_, err := applyK06ToStack(&appStack, "api", namespace, &invalidSub, nil)
 	if err == nil {
 		t.Error("expected error for subIssue -1")
 	}
 
-	// Test subIssue 5
-	invalidSub = 5
-	err = applyK06ToStack(appStack, "api", &invalidSub, nil)
+	// Test subIssue 3 (out of range for K06 which has 0-2)
+	invalidSub = 3
+	_, err = applyK06ToStack(&appStack, "api", namespace, &invalidSub, nil)
 	if err == nil {
-		t.Error("expected error for subIssue 5")
+		t.Error("expected error for subIssue 3")
 	}
 }
 
@@ -1014,7 +930,8 @@ func TestK06TargetNotFound(t *testing.T) {
 	namespace := "test-k06-errors"
 	appStack := baseline.GetAppStack(namespace)
 
-	err := applyK06ToStack(appStack, "nonexistent-deployment", nil, nil)
+	subIssue := 1
+	_, err := applyK06ToStack(&appStack, "nonexistent-deployment", namespace, &subIssue, nil)
 	if err == nil {
 		t.Error("expected error for nonexistent deployment")
 	}
@@ -1026,16 +943,16 @@ func TestK07SubIssueOutOfRange(t *testing.T) {
 
 	// Test subIssue -1
 	invalidSub := -1
-	err := applyK07ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	_, err := applyK07ToStack(&appStack, "api", namespace, &invalidSub, nil)
 	if err == nil {
 		t.Error("expected error for subIssue -1")
 	}
 
-	// Test subIssue 4
-	invalidSub = 4
-	err = applyK07ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	// Test subIssue 5 (out of range for K07 which has 0-4)
+	invalidSub = 5
+	_, err = applyK07ToStack(&appStack, "api", namespace, &invalidSub, nil)
 	if err == nil {
-		t.Error("expected error for subIssue 4")
+		t.Error("expected error for subIssue 5")
 	}
 }
 
@@ -1045,16 +962,16 @@ func TestK08SubIssueOutOfRange(t *testing.T) {
 
 	// Test subIssue -1
 	invalidSub := -1
-	err := applyK08ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	_, err := applyK08ToStack(&appStack, "api", namespace, &invalidSub, nil)
 	if err == nil {
 		t.Error("expected error for subIssue -1")
 	}
 
-	// Test subIssue 3
-	invalidSub = 3
-	err = applyK08ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	// Test subIssue 4 (out of range for K08 which has 0-3)
+	invalidSub = 4
+	_, err = applyK08ToStack(&appStack, "api", namespace, &invalidSub, nil)
 	if err == nil {
-		t.Error("expected error for subIssue 3")
+		t.Error("expected error for subIssue 4")
 	}
 }
 
@@ -1063,7 +980,7 @@ func TestK08TargetNotFound(t *testing.T) {
 	appStack := baseline.GetAppStack(namespace)
 
 	subIssue := 1 // Use subIssue 1 since it directly modifies the deployment
-	err := applyK08ToStack(&appStack, "nonexistent-deployment", namespace, &subIssue, nil)
+	_, err := applyK08ToStack(&appStack, "nonexistent-deployment", namespace, &subIssue, nil)
 	if err == nil {
 		t.Error("expected error for nonexistent deployment")
 	}
@@ -1080,8 +997,7 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 			name string
 			fn   func([]client.Object, string) error
 		}{
-			{"K01", func(stack []client.Object, t string) error { return applyK01ToStack(stack, t, nil, rng) }},
-			{"K06", func(stack []client.Object, t string) error { return applyK06ToStack(stack, t, nil, rng) }},
+			{"K01", func(stack []client.Object, t string) error { _, err := applyK01ToStack(stack, t, nil, rng); return err }},
 		}
 
 		for _, vuln := range vulnerabilities {
@@ -1098,10 +1014,16 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 			fn   func(*[]client.Object, string, string) error
 		}{
 			{"K03", func(stack *[]client.Object, target, ns string) error {
-				return applyK03ToStack(stack, target, ns, nil, rng)
+				_, err := applyK03ToStack(stack, target, ns, nil, rng)
+				return err
+			}},
+			{"K06", func(stack *[]client.Object, target, ns string) error {
+				_, err := applyK06ToStack(stack, target, ns, nil, rng)
+				return err
 			}},
 			{"K08", func(stack *[]client.Object, target, ns string) error {
-				return applyK08ToStack(stack, target, ns, nil, rng)
+				_, err := applyK08ToStack(stack, target, ns, nil, rng)
+				return err
 			}},
 		}
 
@@ -1111,7 +1033,8 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 			fn   func(*[]client.Object, string, string) error
 		}{
 			{"K07", func(stack *[]client.Object, target, ns string) error {
-				return applyK07ToStack(stack, target, ns, nil, rng)
+				_, err := applyK07ToStack(stack, target, ns, nil, rng)
+				return err
 			}},
 		}
 

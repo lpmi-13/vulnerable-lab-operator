@@ -431,6 +431,9 @@ http {
 					Spec: corev1.PodSpec{
 						ServiceAccountName:           "restricted-sa",
 						AutomountServiceAccountToken: ptr.To(false),
+						SecurityContext: &corev1.PodSecurityContext{
+							FSGroup: ptr.To(int64(10002)), // redis user
+						},
 						Containers: []corev1.Container{
 							{
 								Name:            "redis",
@@ -532,6 +535,9 @@ http {
 					Spec: corev1.PodSpec{
 						ServiceAccountName:           "restricted-sa",
 						AutomountServiceAccountToken: ptr.To(false),
+						SecurityContext: &corev1.PodSecurityContext{
+							FSGroup: ptr.To(int64(65534)), // nobody user
+						},
 						Containers: []corev1.Container{
 							{
 								Name:            "prometheus",
@@ -666,6 +672,9 @@ http {
 					Spec: corev1.PodSpec{
 						ServiceAccountName:           "restricted-sa",
 						AutomountServiceAccountToken: ptr.To(false),
+						SecurityContext: &corev1.PodSecurityContext{
+							FSGroup: ptr.To(int64(10004)), // grafana user
+						},
 						Containers: []corev1.Container{
 							{
 								Name:            "grafana",
@@ -807,6 +816,9 @@ http {
 					Spec: corev1.PodSpec{
 						ServiceAccountName:           "restricted-sa",
 						AutomountServiceAccountToken: ptr.To(false),
+						SecurityContext: &corev1.PodSecurityContext{
+							FSGroup: ptr.To(int64(10005)), // node user
+						},
 						Containers: []corev1.Container{
 							{
 								Name:            "api-server",
@@ -950,6 +962,9 @@ http {
 					Spec: corev1.PodSpec{
 						ServiceAccountName:           "restricted-sa",
 						AutomountServiceAccountToken: ptr.To(false),
+						SecurityContext: &corev1.PodSecurityContext{
+							FSGroup: ptr.To(int64(10006)), // python user
+						},
 						Containers: []corev1.Container{
 							{
 								Name:            "user-api",
@@ -1080,6 +1095,9 @@ http {
 					Spec: corev1.PodSpec{
 						ServiceAccountName:           "restricted-sa",
 						AutomountServiceAccountToken: ptr.To(false),
+						SecurityContext: &corev1.PodSecurityContext{
+							FSGroup: ptr.To(int64(10007)), // ruby user
+						},
 						Containers: []corev1.Container{
 							{
 								Name:            "payment-processor",
@@ -1208,6 +1226,9 @@ http {
 					Spec: corev1.PodSpec{
 						ServiceAccountName:           "restricted-sa",
 						AutomountServiceAccountToken: ptr.To(false),
+						SecurityContext: &corev1.PodSecurityContext{
+							FSGroup: ptr.To(int64(10008)), // nginx user
+						},
 						Containers: []corev1.Container{
 							{
 								Name:            "web-ui",

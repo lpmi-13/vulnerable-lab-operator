@@ -27,7 +27,7 @@ type VulnerableLabSpec struct {
 	Vulnerability string `json:"vulnerability,omitempty"`
 	// +optional
 	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=4
+	// +kubebuilder:validation:Maximum=5
 	SubIssue *int `json:"subIssue,omitempty"`
 }
 
@@ -39,6 +39,9 @@ type VulnerableLabStatus struct {
 	// The specific target for the vulnerability (e.g., a deployment name for K01)
 	// +optional
 	TargetResource string `json:"targetResource,omitempty"`
+	// The specific sub-issue that was applied
+	// +optional
+	ChosenSubIssue *int `json:"chosenSubIssue,omitempty"`
 	// State of the lab (Vulnerable, Remediated, Error)
 	// +optional
 	State string `json:"state,omitempty"`

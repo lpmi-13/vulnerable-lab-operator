@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VULN="K06"
-SUB_ISSUE=4
+VULN="K03"
+SUB_ISSUE=3
 LAB_NAME="test-lab"
 
 echo "==> Cleaning up existing VulnerableLab..."

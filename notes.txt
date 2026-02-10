@@ -1,3 +1,4 @@
 - if we wanted to make this capable of running in a multi-node k3s cluster, would there be any benefit from a learning objectives perspective? ie, would that change any of the actual commands (do the scan commands work the same, and are the remediations the same...also have an agent ultrathink about that)?
 - set up a test iximiuz playground, and snapshot it so you can just load it and start up. We'll need k3s and all the scanner installed.
 - run the code-simplifier skill to clean up and refactor as well as simplify this code.
+- get a better favicon for the web notification UI

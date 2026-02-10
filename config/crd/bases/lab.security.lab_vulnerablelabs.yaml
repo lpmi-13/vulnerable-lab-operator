@@ -40,7 +40,7 @@ spec:
             description: VulnerableLabSpec defines the desired state of VulnerableLab.
             properties:
               subIssue:
-                maximum: 4
+                maximum: 5
                 minimum: 0
                 type: integer
               vulnerability:
@@ -56,6 +56,9 @@ spec:
           status:
             description: VulnerableLabStatus defines the observed state of VulnerableLab.
             properties:
+              chosenSubIssue:
+                description: The specific sub-issue that was applied
+                type: integer
               chosenVulnerability:
                 description: The chosen vulnerability for this instance
                 type: string

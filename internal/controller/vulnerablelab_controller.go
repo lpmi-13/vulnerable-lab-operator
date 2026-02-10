@@ -214,7 +214,8 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	r.mu.Unlock()
 
 	// Use BreakCluster instead of InitializeLab
-	if err := breaker.BreakCluster(ctx, r.Client, chosenVuln, targetDeployment, namespace, lab.Spec.SubIssue, r.rng); err != nil {
+	chosenSubIssue, err := breaker.BreakCluster(ctx, r.Client, chosenVuln, targetDeployment, namespace, lab.Spec.SubIssue, r.rng)
+	if err != nil {
 		logger.Error(err, "Failed to apply vulnerability")
 
 		// Get the latest version of the resource before updating
@@ -243,7 +244,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	}
 
 	// Check if vulnerability is visible yet
-	isStale, err := breaker.CheckRemediation(ctx, r.Client, chosenVuln, targetDeployment, namespace)
+	isStale, err := breaker.CheckRemediation(ctx, r.Client, chosenVuln, targetDeployment, namespace, &chosenSubIssue)
 	if err != nil {
 		logger.Error(err, "Failed to verify vulnerability state")
 		return ctrl.Result{}, err
@@ -293,6 +294,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	if err := r.updateStatusWithRetry(ctx, lab, func(lab *v1alpha1.VulnerableLab) {
 		lab.Status.ChosenVulnerability = chosenVuln
 		lab.Status.TargetResource = targetDeployment
+		lab.Status.ChosenSubIssue = &chosenSubIssue
 		lab.Status.State = v1alpha1.StateVulnerable
 		lab.Status.Message = fmt.Sprintf("Cluster is vulnerable. Find and fix the %s issue.", chosenVuln)
 	}); err != nil {
@@ -317,7 +319,12 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 		r.cleanupOrphanedK03Resources(ctx, namespace)
 	}
 
-	isFixed, err := breaker.CheckRemediation(ctx, r.Client, lab.Status.ChosenVulnerability, lab.Status.TargetResource, namespace)
+	// For K06 vulnerabilities, check for partial deletions and clean up
+	if lab.Status.ChosenVulnerability == "K06" {
+		r.cleanupOrphanedK06Resources(ctx, namespace)
+	}
+
+	isFixed, err := breaker.CheckRemediation(ctx, r.Client, lab.Status.ChosenVulnerability, lab.Status.TargetResource, namespace, lab.Status.ChosenSubIssue)
 	if err != nil {
 		logger.Error(err, "Failed to check remediation status")
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
@@ -427,6 +434,7 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 	if err := r.updateStatusWithRetry(ctx, lab, func(lab *v1alpha1.VulnerableLab) {
 		lab.Status.ChosenVulnerability = ""
 		lab.Status.TargetResource = ""
+		lab.Status.ChosenSubIssue = nil
 		lab.Status.State = v1alpha1.StateInitialized
 		lab.Status.Message = "Preparing new challenge..."
 	}); err != nil {
@@ -489,12 +497,55 @@ func (r *VulnerableLabReconciler) cleanupOrphanedK03Resources(ctx context.Contex
 	}
 }
 
+// cleanupOrphanedK06Resources removes orphaned ServiceAccount resources when deleted
+func (r *VulnerableLabReconciler) cleanupOrphanedK06Resources(ctx context.Context, namespace string) {
+	logger := log.FromContext(ctx)
+
+	// K06:2 creates an unrestricted-sa ServiceAccount
+	sa := &corev1.ServiceAccount{}
+	err := r.Get(ctx, client.ObjectKey{Name: "unrestricted-sa", Namespace: namespace}, sa)
+	if err == nil {
+		// Check if it's still referenced by any deployment
+		depList := &appsv1.DeploymentList{}
+		if err := r.List(ctx, depList, client.InNamespace(namespace)); err == nil {
+			saInUse := false
+			for _, dep := range depList.Items {
+				if dep.Spec.Template.Spec.ServiceAccountName == "unrestricted-sa" {
+					saInUse = true
+					break
+				}
+			}
+
+			// If not in use, delete it
+			if !saInUse {
+				logger.Info("Cleaning up orphaned ServiceAccount", "serviceAccount", "unrestricted-sa")
+				if err := r.Delete(ctx, sa); err != nil && !errors.IsNotFound(err) {
+					logger.Error(err, "Failed to delete orphaned ServiceAccount", "serviceAccount", "unrestricted-sa")
+				}
+			}
+		}
+	}
+}
+
 // cleanupClusterRBAC removes any cluster-scoped RBAC resources
-// Note: K03 vulnerabilities are now entirely namespace-scoped and cleaned up automatically
-// when the namespace is deleted. This function is kept for potential future cluster-scoped vulnerabilities.
+// K03:3 creates ClusterRoleBindings that need to be cleaned up
 func (r *VulnerableLabReconciler) cleanupClusterRBAC(ctx context.Context, namespace string) {
-	// Currently no cluster-scoped resources to clean up
-	// K03 now uses only namespace-scoped Roles and RoleBindings
+	logger := log.FromContext(ctx)
+
+	// Delete ClusterRoleBinding for K03:3 if it exists
+	clusterBindingName := fmt.Sprintf("%s-cluster-admin-binding", namespace)
+	clusterBinding := &rbacv1.ClusterRoleBinding{}
+	err := r.Get(ctx, client.ObjectKey{Name: clusterBindingName}, clusterBinding)
+	if err == nil {
+		// ClusterRoleBinding exists, delete it
+		if err := r.Delete(ctx, clusterBinding); err != nil {
+			logger.Error(err, "Failed to delete ClusterRoleBinding", "name", clusterBindingName)
+		} else {
+			logger.Info("Deleted ClusterRoleBinding", "name", clusterBindingName)
+		}
+	} else if !errors.IsNotFound(err) {
+		logger.Error(err, "Failed to get ClusterRoleBinding", "name", clusterBindingName)
+	}
 }
 
 // updateStatusWithRetry updates the VulnerableLab status with retry on conflicts
@@ -597,6 +648,10 @@ func (r *VulnerableLabReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		).
 		Watches(
 			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.mapResourceToLab),
+		).
+		Watches(
+			&corev1.ServiceAccount{},
 			handler.EnqueueRequestsFromMapFunc(r.mapResourceToLab),
 		).
 		Complete(r)

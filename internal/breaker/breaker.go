@@ -25,6 +25,7 @@ const (
 	postgresServiceName    = "postgres-service"
 	externalDatabaseAccess = "external-database-access"
 	apiDeploymentName      = "api"
+	unrestrictedSAName     = "unrestricted-sa"
 )
 
 // Constants for commonly used strings
@@ -33,50 +34,67 @@ const (
 	testAPIKey          = "sk_test_12345"
 )
 
+// Constants for Linux capabilities
+const (
+	capSysAdmin = "SYS_ADMIN"
+	capNetAdmin = "NET_ADMIN"
+)
+
 // BreakCluster applies the specified vulnerability to the cluster using build-with-vulnerabilities approach
-func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, targetResource, namespace string, subIssue *int, rng *rand.Rand) error {
+func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, targetResource, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
 	logger := log.FromContext(ctx)
 
 	logger.Info("Applying vulnerability", "vulnerability", vulnerabilityID, "namespace", namespace)
 
 	// First, ensure the namespace exists
 	if err := createNamespaceIfNotExists(ctx, c, namespace); err != nil {
-		return fmt.Errorf("failed to create namespace: %w", err)
+		return 0, fmt.Errorf("failed to create namespace: %w", err)
 	}
 
 	// Get the baseline application stack
 	appStack := baseline.GetAppStack(namespace)
 
 	// Apply the vulnerability to the target resource within the stack before deployment
+	var chosenSubIssue int
 	switch vulnerabilityID {
 	case "K01":
-		if err := applyK01ToStack(appStack, targetResource, subIssue, rng); err != nil {
-			return fmt.Errorf("failed to apply K01 vulnerability: %w", err)
+		sub, err := applyK01ToStack(appStack, targetResource, subIssue, rng)
+		if err != nil {
+			return 0, fmt.Errorf("failed to apply K01 vulnerability: %w", err)
 		}
+		chosenSubIssue = sub
 	case "K03":
-		if err := applyK03ToStack(&appStack, targetResource, namespace, subIssue, rng); err != nil {
-			return fmt.Errorf("failed to apply K03 vulnerability: %w", err)
+		sub, err := applyK03ToStack(&appStack, targetResource, namespace, subIssue, rng)
+		if err != nil {
+			return 0, fmt.Errorf("failed to apply K03 vulnerability: %w", err)
 		}
+		chosenSubIssue = sub
 	// K04 (Lack of Centralized Policy Enforcement) and K05 (Inadequate Logging and Monitoring)
 	// are not implemented as they require external infrastructure (OPA Gatekeeper, SIEM systems)
 	// rather than resource-level misconfigurations that can be demonstrated in this lab environment
 	case "K06":
-		if err := applyK06ToStack(appStack, targetResource, subIssue, rng); err != nil {
-			return fmt.Errorf("failed to apply K06 vulnerability: %w", err)
+		sub, err := applyK06ToStack(&appStack, targetResource, namespace, subIssue, rng)
+		if err != nil {
+			return 0, fmt.Errorf("failed to apply K06 vulnerability: %w", err)
 		}
+		chosenSubIssue = sub
 	case "K07":
-		if err := applyK07ToStack(&appStack, targetResource, namespace, subIssue, rng); err != nil {
-			return fmt.Errorf("failed to apply K07 vulnerability: %w", err)
+		sub, err := applyK07ToStack(&appStack, targetResource, namespace, subIssue, rng)
+		if err != nil {
+			return 0, fmt.Errorf("failed to apply K07 vulnerability: %w", err)
 		}
+		chosenSubIssue = sub
 	case "K08":
-		if err := applyK08ToStack(&appStack, targetResource, namespace, subIssue, rng); err != nil {
-			return fmt.Errorf("failed to apply K08 vulnerability: %w", err)
+		sub, err := applyK08ToStack(&appStack, targetResource, namespace, subIssue, rng)
+		if err != nil {
+			return 0, fmt.Errorf("failed to apply K08 vulnerability: %w", err)
 		}
+		chosenSubIssue = sub
 	// K09 (Misconfigured Cluster Components) and K10 (Outdated and Vulnerable Kubernetes Components)
 	// are not implemented as they require cluster-level administrative access and would affect
 	// the entire cluster rather than being contained within individual lab namespaces
 	default:
-		return fmt.Errorf("unknown vulnerability ID: %s", vulnerabilityID)
+		return 0, fmt.Errorf("unknown vulnerability ID: %s", vulnerabilityID)
 	}
 
 	// Deploy the entire modified stack at once
@@ -87,23 +105,23 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 				// Fetch the existing resource to get its resourceVersion
 				existing := obj.DeepCopyObject().(client.Object)
 				if err := c.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
-					return fmt.Errorf("failed to get existing resource %s: %w", obj.GetName(), err)
+					return 0, fmt.Errorf("failed to get existing resource %s: %w", obj.GetName(), err)
 				}
 				// Copy resourceVersion to our modified object
 				obj.SetResourceVersion(existing.GetResourceVersion())
 				// Preserve immutable fields before update
 				preserveImmutableFields(obj, existing)
 				if err := c.Update(ctx, obj); err != nil {
-					return fmt.Errorf("failed to update existing resource %s: %w", obj.GetName(), err)
+					return 0, fmt.Errorf("failed to update existing resource %s: %w", obj.GetName(), err)
 				}
 				continue
 			}
-			return fmt.Errorf("failed to create resource %s: %w", obj.GetName(), err)
+			return 0, fmt.Errorf("failed to create resource %s: %w", obj.GetName(), err)
 		}
 	}
 
 	logger.Info("Vulnerable stack deployment complete", "vulnerability", vulnerabilityID, "target", targetResource)
-	return nil
+	return chosenSubIssue, nil
 }
 
 // preserveImmutableFields copies immutable fields from existing resource to new resource before update
@@ -137,7 +155,7 @@ func createNamespaceIfNotExists(ctx context.Context, c client.Client, namespace 
 // InitializeLab function is no longer used - replaced by BreakCluster with build-with-vulnerabilities approach
 
 // applyK01ToStack modifies the baseline stack to apply insecure workload configurations
-func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue *int, rng *rand.Rand) error {
+func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue *int, rng *rand.Rand) (int, error) {
 	// Find and modify the target deployment within the stack
 	for _, obj := range appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
@@ -146,13 +164,13 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 			// Choose vulnerability type based on subIssue parameter or randomly
 			var vulnType int
 			if subIssue != nil {
-				if *subIssue < 0 || *subIssue > 2 {
-					return fmt.Errorf("subIssue %d out of range for K01 (valid: 0-2)", *subIssue)
+				if *subIssue < 0 || *subIssue > 5 {
+					return 0, fmt.Errorf("subIssue %d out of range for K01 (valid: 0-5)", *subIssue)
 				}
 				vulnType = *subIssue
 			} else {
-				// Randomly choose one of three K01 vulnerability types
-				vulnType = rng.Intn(3)
+				// Randomly choose one of six K01 vulnerability types
+				vulnType = rng.Intn(6)
 			}
 
 			switch vulnType {
@@ -192,65 +210,76 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 					container.SecurityContext.Capabilities = &corev1.Capabilities{}
 				}
 				container.SecurityContext.Capabilities.Add = []corev1.Capability{
-					"SYS_ADMIN",
-					"NET_ADMIN",
+					capSysAdmin,
+					capNetAdmin,
 				}
 				// Add annotation that looks like a network requirement
 				if dep.Spec.Template.Annotations == nil {
 					dep.Spec.Template.Annotations = make(map[string]string)
 				}
 				dep.Spec.Template.Annotations["container.security.capabilities"] = "network-management"
+
+			case 3: // Host PID namespace (flagged by Kubescape C-0038)
+				// Enable hostPID to expose host process namespace
+				dep.Spec.Template.Spec.HostPID = true
+
+			case 4: // ReadOnlyRootFilesystem disabled (flagged by Kubescape C-0017)
+				// Disable read-only root filesystem
+				if container.SecurityContext == nil {
+					container.SecurityContext = &corev1.SecurityContext{}
+				}
+				container.SecurityContext.ReadOnlyRootFilesystem = ptr.To(false)
+
+			case 5: // Missing resource limits (flagged by Kubescape C-0009, C-0004)
+				// Remove resource limits to create vulnerability
+				container.Resources = corev1.ResourceRequirements{}
 			}
 
-			return nil
+			return vulnType, nil
 		}
 	}
 
-	return fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
+	return 0, fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
 }
 
 // applyK02ToStack modifies the baseline stack to apply supply chain vulnerabilities
 // applyK03ToStack modifies the baseline stack to apply overly permissive RBAC configurations
-func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) error {
+func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
 	// Find and modify the target deployment within the stack
 	for _, obj := range *appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
 			// Choose vulnerability type based on subIssue parameter or randomly
 			var vulnType int
 			if subIssue != nil {
-				if *subIssue < 0 || *subIssue > 2 {
-					return fmt.Errorf("subIssue %d out of range for K03 (valid: 0-2)", *subIssue)
+				if *subIssue < 0 || *subIssue > 3 {
+					return 0, fmt.Errorf("subIssue %d out of range for K03 (valid: 0-3)", *subIssue)
 				}
 				vulnType = *subIssue
 			} else {
-				// Randomly choose one of three K03 vulnerability types (all namespace-scoped)
-				vulnType = rng.Intn(3)
+				// Randomly choose one of four K03 vulnerability types
+				vulnType = rng.Intn(4)
 			}
 
 			switch vulnType {
 			case 0: // Namespace Overpermissive Access (namespace-scoped)
-				if err := createNamespaceOverpermissiveRBAC(appStack, namespace); err != nil {
-					return err
-				}
+				createNamespaceOverpermissiveRBAC(appStack, namespace)
 			case 1: // Default Service Account Permissions (namespace-scoped)
-				if err := createDefaultServiceAccountRBAC(appStack, namespace); err != nil {
-					return err
-				}
+				createDefaultServiceAccountRBAC(appStack, namespace)
 			case 2: // Excessive Secrets Access (namespace-scoped)
-				if err := createExcessiveSecretsRBAC(appStack, namespace); err != nil {
-					return err
-				}
+				createExcessiveSecretsRBAC(appStack, namespace)
+			case 3: // ClusterRoleBinding to cluster-admin (cluster-scoped)
+				createClusterAdminBinding(appStack, namespace)
 			}
 
-			return nil
+			return vulnType, nil
 		}
 	}
 
-	return fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
+	return 0, fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
 }
 
 // createNamespaceOverpermissiveRBAC grants overly broad permissions within the namespace only
-func createNamespaceOverpermissiveRBAC(appStack *[]client.Object, namespace string) error {
+func createNamespaceOverpermissiveRBAC(appStack *[]client.Object, namespace string) {
 	role := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-overpermissive", namespace),
@@ -305,12 +334,10 @@ func createNamespaceOverpermissiveRBAC(appStack *[]client.Object, namespace stri
 
 	// Add the RBAC resources to the stack
 	*appStack = append(*appStack, role, binding)
-
-	return nil
 }
 
 // createDefaultServiceAccountRBAC grants excessive permissions to the service account
-func createDefaultServiceAccountRBAC(appStack *[]client.Object, namespace string) error {
+func createDefaultServiceAccountRBAC(appStack *[]client.Object, namespace string) {
 	role := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-default-permissions", namespace),
@@ -361,12 +388,10 @@ func createDefaultServiceAccountRBAC(appStack *[]client.Object, namespace string
 
 	// Add the RBAC resources to the stack (Role first, then RoleBinding)
 	*appStack = append(*appStack, role, binding)
-
-	return nil
 }
 
 // createExcessiveSecretsRBAC grants overly broad access to secrets within the namespace
-func createExcessiveSecretsRBAC(appStack *[]client.Object, namespace string) error {
+func createExcessiveSecretsRBAC(appStack *[]client.Object, namespace string) {
 	role := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-secrets-reader", namespace),
@@ -416,25 +441,54 @@ func createExcessiveSecretsRBAC(appStack *[]client.Object, namespace string) err
 
 	// Add the RBAC resources to the stack
 	*appStack = append(*appStack, role, binding)
+}
 
-	return nil
+// createClusterAdminBinding binds a service account to the cluster-admin ClusterRole
+func createClusterAdminBinding(appStack *[]client.Object, namespace string) {
+	binding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-cluster-admin-binding", namespace),
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+				"rbac.k8s.lab/namespace":  namespace,
+			},
+			Annotations: map[string]string{
+				"rbac.authorization.k8s.io/reason": "infrastructure-management",
+			},
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "restricted-sa",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "cluster-admin",
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	// Add the ClusterRoleBinding to the stack
+	*appStack = append(*appStack, binding)
 }
 
 // applyK06ToStack modifies the baseline stack to apply broken authentication vulnerabilities
-func applyK06ToStack(appStack []client.Object, targetDeployment string, subIssue *int, rng *rand.Rand) error {
+func applyK06ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
 	// Find and modify the target deployment within the stack
-	for _, obj := range appStack {
+	for _, obj := range *appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
 			// Choose vulnerability type based on subIssue parameter or randomly
 			var vulnType int
 			if subIssue != nil {
-				if *subIssue < 0 || *subIssue > 4 {
-					return fmt.Errorf("subIssue %d out of range for K06 (valid: 0-4)", *subIssue)
+				if *subIssue < 0 || *subIssue > 2 {
+					return 0, fmt.Errorf("subIssue %d out of range for K06 (valid: 0-2)", *subIssue)
 				}
 				vulnType = *subIssue
 			} else {
-				// Randomly choose one of five K06 vulnerability types (removed duplicate K06:2)
-				vulnType = rng.Intn(5)
+				// Randomly choose one of three K06 vulnerability types
+				vulnType = rng.Intn(3)
 			}
 
 			switch vulnType {
@@ -444,38 +498,34 @@ func applyK06ToStack(appStack []client.Object, targetDeployment string, subIssue
 			case 1: // Auto-mount service account token (scanner-detectable via Kubescape C-0034)
 				dep.Spec.Template.Spec.AutomountServiceAccountToken = ptr.To(true)
 
-			case 2: // Missing fsGroup in PodSecurityContext (flagged by Kubescape C-0057)
-				// Add a PodSecurityContext with FSGroup, then remove it to create the vulnerability
-				if dep.Spec.Template.Spec.SecurityContext == nil {
-					dep.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{}
+			case 2: // Permissive SA with automount override (flagged by Kubescape C-0034)
+				// Create a service account with automount token enabled
+				sa := &corev1.ServiceAccount{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: "v1",
+						Kind:       "ServiceAccount",
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      unrestrictedSAName,
+						Namespace: namespace,
+					},
+					AutomountServiceAccountToken: ptr.To(true),
 				}
-				dep.Spec.Template.Spec.SecurityContext.FSGroup = nil // Remove fsGroup to create vulnerability
+				*appStack = append(*appStack, sa)
 
-			case 3: // Root user with volume access (flagged by Kubescape C-0013)
-				for i := range dep.Spec.Template.Spec.Containers {
-					if dep.Spec.Template.Spec.Containers[i].SecurityContext != nil {
-						dep.Spec.Template.Spec.Containers[i].SecurityContext.RunAsUser = ptr.To(int64(0))
-						// Note: keeping runAsNonRoot unchanged - only modifying runAsUser creates the vulnerability
-					}
-				}
-
-			case 4: // Privileged container with volume access (flagged by Kubescape C-0016)
-				for i := range dep.Spec.Template.Spec.Containers {
-					if dep.Spec.Template.Spec.Containers[i].SecurityContext != nil {
-						dep.Spec.Template.Spec.Containers[i].SecurityContext.Privileged = ptr.To(true)
-					}
-				}
+				// Assign the permissive SA to the deployment
+				dep.Spec.Template.Spec.ServiceAccountName = unrestrictedSAName
 			}
 
-			return nil
+			return vulnType, nil
 		}
 	}
 
-	return fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
+	return 0, fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
 }
 
 // applyK07ToStack modifies the baseline stack to demonstrate missing network segmentation controls
-func applyK07ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) error {
+func applyK07ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
 	// K07 vulnerabilities are about MISSING network controls rather than broken ones
 	// We demonstrate this by either disabling network policies or exposing services externally
 	// Note: targetDeployment parameter kept for API consistency with other vulnerability functions
@@ -484,42 +534,43 @@ func applyK07ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 	// Choose vulnerability type based on subIssue parameter or randomly
 	var vulnType int
 	if subIssue != nil {
-		if *subIssue < 0 || *subIssue > 3 {
-			return fmt.Errorf("subIssue %d out of range for K07 (valid: 0-3)", *subIssue)
+		if *subIssue < 0 || *subIssue > 4 {
+			return 0, fmt.Errorf("subIssue %d out of range for K07 (valid: 0-4)", *subIssue)
 		}
 		vulnType = *subIssue
 	} else {
-		// Randomly choose one of four K07 vulnerability demonstrations
-		vulnType = rng.Intn(4)
+		// Randomly choose one of five K07 vulnerability demonstrations
+		vulnType = rng.Intn(5)
 	}
 
 	switch vulnType {
 	case 0: // Unrestricted pod-to-pod communication (delete network policy)
-		if err := addNetworkPolicyDisabledAnnotation(appStack); err != nil {
-			return err
-		}
+		addNetworkPolicyDisabledAnnotation(appStack)
 
 	case 1: // Network isolation disabled (create allow-all network policy)
-		if err := addNetworkIsolationDisabledAnnotation(appStack, namespace); err != nil {
-			return err
-		}
+		addNetworkIsolationDisabledAnnotation(appStack, namespace)
 
 	case 2: // Database exposure (modify postgres service to NodePort)
 		if err := exposePostgresServiceAsNodePort(appStack); err != nil {
-			return err
+			return vulnType, err
 		}
 
 	case 3: // Service exposure annotation
 		if err := addServiceExposureAnnotation(appStack); err != nil {
-			return err
+			return vulnType, err
+		}
+
+	case 4: // Overly permissive egress (modify api-network-policy to allow-all egress)
+		if err := allowAllEgressInNetworkPolicy(appStack); err != nil {
+			return vulnType, err
 		}
 	}
 
-	return nil
+	return vulnType, nil
 }
 
 // addNetworkPolicyDisabledAnnotation deletes NetworkPolicy to demonstrate missing network controls
-func addNetworkPolicyDisabledAnnotation(appStack *[]client.Object) error {
+func addNetworkPolicyDisabledAnnotation(appStack *[]client.Object) {
 	// Remove any NetworkPolicy from the stack to demonstrate missing network controls
 	var updatedStack []client.Object
 	for _, obj := range *appStack {
@@ -528,11 +579,10 @@ func addNetworkPolicyDisabledAnnotation(appStack *[]client.Object) error {
 		}
 	}
 	*appStack = updatedStack
-	return nil
 }
 
 // addNetworkIsolationDisabledAnnotation creates an allow-all NetworkPolicy
-func addNetworkIsolationDisabledAnnotation(appStack *[]client.Object, namespace string) error {
+func addNetworkIsolationDisabledAnnotation(appStack *[]client.Object, namespace string) {
 	// Create an allow-all NetworkPolicy
 	allowAllPolicy := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
@@ -556,7 +606,6 @@ func addNetworkIsolationDisabledAnnotation(appStack *[]client.Object, namespace 
 
 	// Add the allow-all policy to the stack
 	*appStack = append(*appStack, allowAllPolicy)
-	return nil
 }
 
 // addServiceExposureAnnotation changes the postgres service type to LoadBalancer
@@ -592,38 +641,59 @@ func exposePostgresServiceAsNodePort(appStack *[]client.Object) error {
 	return fmt.Errorf("%s not found in baseline stack", postgresServiceName)
 }
 
+// allowAllEgressInNetworkPolicy modifies api-network-policy to allow all egress traffic
+func allowAllEgressInNetworkPolicy(appStack *[]client.Object) error {
+	for _, obj := range *appStack {
+		if netpol, ok := obj.(*networkingv1.NetworkPolicy); ok && netpol.Name == "api-network-policy" {
+			// Replace egress rules with allow-all (empty To field means allow all)
+			// Keep ingress rules intact
+			netpol.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{
+				{
+					// Empty To field allows egress to all destinations
+					To: []networkingv1.NetworkPolicyPeer{},
+				},
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("api-network-policy not found in baseline stack")
+}
+
 // applyK08ToStack modifies the baseline stack to apply secrets management vulnerabilities
-func applyK08ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) error {
+func applyK08ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
 	// Choose vulnerability type based on subIssue parameter or randomly
 	var vulnType int
 	if subIssue != nil {
-		if *subIssue < 0 || *subIssue > 2 {
-			return fmt.Errorf("subIssue %d out of range for K08 (valid: 0-2)", *subIssue)
+		if *subIssue < 0 || *subIssue > 3 {
+			return 0, fmt.Errorf("subIssue %d out of range for K08 (valid: 0-3)", *subIssue)
 		}
 		vulnType = *subIssue
 	} else {
-		// Randomly choose one of three K08 vulnerability types
-		vulnType = rng.Intn(3)
+		// Randomly choose one of four K08 vulnerability types
+		vulnType = rng.Intn(4)
 	}
 
 	switch vulnType {
 	case 0: // Secret data in ConfigMaps
-		if err := moveSecretsToConfigMap(appStack, targetDeployment, namespace); err != nil {
-			return err
-		}
+		moveSecretsToConfigMap(appStack, targetDeployment, namespace)
 
 	case 1: // Hardcoded secrets annotation (without changing environment)
 		if err := addHardcodedSecretsAnnotation(appStack, targetDeployment); err != nil {
-			return err
+			return vulnType, err
 		}
 
 	case 2: // Insecure volume permissions annotation (without changing volumes)
 		if err := addInsecureVolumeAnnotation(appStack, targetDeployment); err != nil {
-			return err
+			return vulnType, err
+		}
+
+	case 3: // Secret data in pod annotations
+		if err := addSecretsInPodAnnotations(appStack, targetDeployment); err != nil {
+			return vulnType, err
 		}
 	}
 
-	return nil
+	return vulnType, nil
 }
 
 // addHardcodedSecretsAnnotation adds hardcoded secrets as literal environment variables
@@ -704,7 +774,7 @@ func addInsecureVolumeAnnotation(appStack *[]client.Object, targetDeployment str
 }
 
 // moveSecretsToConfigMap creates a ConfigMap with secret data instead of using Secrets
-func moveSecretsToConfigMap(appStack *[]client.Object, targetDeployment, namespace string) error {
+func moveSecretsToConfigMap(appStack *[]client.Object, targetDeployment, namespace string) {
 	// Create a ConfigMap with sensitive data
 	insecureConfigMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -768,7 +838,26 @@ func moveSecretsToConfigMap(appStack *[]client.Object, targetDeployment, namespa
 		}
 	}
 
-	return nil
+}
+
+// addSecretsInPodAnnotations adds sensitive data to pod template annotations
+func addSecretsInPodAnnotations(appStack *[]client.Object, targetDeployment string) error {
+	for _, obj := range *appStack {
+		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
+			// Add sensitive data as pod template annotations
+			if dep.Spec.Template.Annotations == nil {
+				dep.Spec.Template.Annotations = make(map[string]string)
+			}
+
+			// Add secrets as annotations (visible via kubectl describe)
+			dep.Spec.Template.Annotations["config.app/jwt-secret"] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.secret-jwt-key-2024"
+			dep.Spec.Template.Annotations["config.app/api-key"] = "51234567890abcdefghijklmnopqrstuv"
+			dep.Spec.Template.Annotations["config.app/db-password"] = "P@ssw0rd!2024#SecureDB"
+
+			return nil
+		}
+	}
+	return fmt.Errorf("target deployment %s not found", targetDeployment)
 }
 
 // The old functions below are no longer used - they've been replaced by the ToStack variants above
