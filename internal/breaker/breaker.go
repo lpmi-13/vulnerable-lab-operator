@@ -160,13 +160,13 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 			// Choose vulnerability type based on subIssue parameter or randomly
 			var vulnType int
 			if subIssue != nil {
-				if *subIssue < 0 || *subIssue > 5 {
-					return 0, fmt.Errorf("subIssue %d out of range for K01 (valid: 0-5)", *subIssue)
+				if *subIssue < 0 || *subIssue > 8 {
+					return 0, fmt.Errorf("subIssue %d out of range for K01 (valid: 0-8)", *subIssue)
 				}
 				vulnType = *subIssue
 			} else {
-				// Randomly choose one of six K01 vulnerability types
-				vulnType = rng.Intn(6)
+				// Randomly choose one of nine K01 vulnerability types
+				vulnType = rng.Intn(9)
 			}
 
 			switch vulnType {
@@ -178,6 +178,10 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 				container.SecurityContext.Privileged = ptr.To(true)
 				// When privileged=true, allowPrivilegeEscalation must be nil or true (cannot be false)
 				container.SecurityContext.AllowPrivilegeEscalation = nil
+				// Clear capabilities drop: leaving Drop=["ALL"] suppresses kubescape C-0057
+				if container.SecurityContext.Capabilities != nil {
+					container.SecurityContext.Capabilities.Drop = nil
+				}
 				// Add annotation indicating why this is privileged (looks realistic)
 				if dep.Spec.Template.Annotations == nil {
 					dep.Spec.Template.Annotations = make(map[string]string)
@@ -215,9 +219,10 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 				}
 				dep.Spec.Template.Annotations["container.security.capabilities"] = "network-management"
 
-			case 3: // Host PID namespace (flagged by Kubescape C-0038)
-				// Enable hostPID to expose host process namespace
-				dep.Spec.Template.Spec.HostPID = true
+			case 3: // Missing fsGroup in PodSecurityContext (flagged by Kubescape C-0211)
+				if dep.Spec.Template.Spec.SecurityContext != nil {
+					dep.Spec.Template.Spec.SecurityContext.FSGroup = nil
+				}
 
 			case 4: // ReadOnlyRootFilesystem disabled (flagged by Kubescape C-0017)
 				// Disable read-only root filesystem
@@ -229,6 +234,29 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 			case 5: // Missing resource limits (flagged by Kubescape C-0009, C-0004)
 				// Remove resource limits to create vulnerability
 				container.Resources = corev1.ResourceRequirements{}
+
+			case 6: // Host PID/IPC access (flagged by Kubescape C-0038)
+				dep.Spec.Template.Spec.HostPID = true
+				dep.Spec.Template.Spec.HostIPC = true
+
+			case 7: // HostNetwork access (flagged by Kubescape C-0041)
+				dep.Spec.Template.Spec.HostNetwork = true
+
+			case 8: // HostPath volume mount (flagged by Kubescape C-0048)
+				dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, corev1.Volume{
+					Name: "host-data",
+					VolumeSource: corev1.VolumeSource{
+						HostPath: &corev1.HostPathVolumeSource{Path: "/var/log"},
+					},
+				})
+				dep.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+					dep.Spec.Template.Spec.Containers[0].VolumeMounts,
+					corev1.VolumeMount{
+						Name:      "host-data",
+						MountPath: "/host-log",
+						ReadOnly:  true,
+					},
+				)
 			}
 
 			return vulnType, nil
@@ -246,13 +274,13 @@ func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 			// Choose vulnerability type based on subIssue parameter or randomly
 			var vulnType int
 			if subIssue != nil {
-				if *subIssue < 0 || *subIssue > 3 {
-					return 0, fmt.Errorf("subIssue %d out of range for K03 (valid: 0-3)", *subIssue)
+				if *subIssue < 0 || *subIssue > 7 {
+					return 0, fmt.Errorf("subIssue %d out of range for K03 (valid: 0-7)", *subIssue)
 				}
 				vulnType = *subIssue
 			} else {
-				// Randomly choose one of four K03 vulnerability types
-				vulnType = rng.Intn(4)
+				// Randomly choose one of eight K03 vulnerability types
+				vulnType = rng.Intn(8)
 			}
 
 			switch vulnType {
@@ -264,6 +292,14 @@ func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 				createExcessiveSecretsRBAC(appStack, namespace)
 			case 3: // ClusterRoleBinding to cluster-admin (cluster-scoped)
 				createClusterAdminBinding(appStack, namespace)
+			case 4: // Wildcard permissions (C-0187)
+				createWildcardRBAC(appStack, namespace)
+			case 5: // exec + portforward (C-0063, C-0002)
+				createExecPortforwardRBAC(appStack, namespace)
+			case 6: // Delete capabilities (C-0007)
+				createDeleteCapabilitiesRBAC(appStack, namespace)
+			case 7: // Pod creation (C-0188)
+				createPodCreationRBAC(appStack, namespace)
 			}
 
 			return vulnType, nil
@@ -435,6 +471,199 @@ func createExcessiveSecretsRBAC(appStack *[]client.Object, namespace string) {
 	}
 
 	// Add the RBAC resources to the stack
+	*appStack = append(*appStack, role, binding)
+}
+
+// createWildcardRBAC grants wildcard permissions within the namespace (C-0187)
+func createWildcardRBAC(appStack *[]client.Object, namespace string) {
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-wildcard-role", namespace),
+			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
+			Annotations: map[string]string{
+				"rbac.authorization.k8s.io/reason": "broad-access-required",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{"*"},
+				Resources: []string{"*"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods", "services"},
+				Verbs:     []string{"*"},
+			},
+		},
+	}
+
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-wildcard-binding", namespace),
+			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "restricted-sa",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "Role",
+			Name:     role.Name,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	*appStack = append(*appStack, role, binding)
+}
+
+// createExecPortforwardRBAC grants pods/exec and pods/portforward permissions (C-0063, C-0002)
+func createExecPortforwardRBAC(appStack *[]client.Object, namespace string) {
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-exec-portforward-role", namespace),
+			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
+			Annotations: map[string]string{
+				"rbac.authorization.k8s.io/reason": "debug-access",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods/exec", "pods/portforward"},
+				Verbs:     []string{"create", "get"},
+			},
+		},
+	}
+
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-exec-portforward-binding", namespace),
+			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "restricted-sa",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "Role",
+			Name:     role.Name,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	*appStack = append(*appStack, role, binding)
+}
+
+// createDeleteCapabilitiesRBAC grants broad delete permissions within the namespace (C-0007)
+func createDeleteCapabilitiesRBAC(appStack *[]client.Object, namespace string) {
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-delete-role", namespace),
+			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
+			Annotations: map[string]string{
+				"rbac.authorization.k8s.io/reason": "cleanup-operations",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods", "services", "configmaps", "secrets"},
+				Verbs:     []string{"delete"},
+			},
+		},
+	}
+
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-delete-binding", namespace),
+			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "restricted-sa",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "Role",
+			Name:     role.Name,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	*appStack = append(*appStack, role, binding)
+}
+
+// createPodCreationRBAC grants pod creation permissions within the namespace (C-0188)
+func createPodCreationRBAC(appStack *[]client.Object, namespace string) {
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-pod-create-role", namespace),
+			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
+			Annotations: map[string]string{
+				"rbac.authorization.k8s.io/reason": "workload-management",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods"},
+				Verbs:     []string{"create", "get", "list", "watch"},
+			},
+		},
+	}
+
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-pod-create-binding", namespace),
+			Namespace: namespace,
+			Labels: map[string]string{
+				"rbac.k8s.lab/managed-by": "vulnerable-lab",
+			},
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "restricted-sa",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "Role",
+			Name:     role.Name,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
 	*appStack = append(*appStack, role, binding)
 }
 

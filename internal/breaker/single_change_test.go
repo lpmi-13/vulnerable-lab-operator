@@ -41,6 +41,8 @@ func findService(stack []client.Object, name string) *corev1.Service {
 }
 
 // countK01Changes counts the number of K01-relevant workload configuration changes
+//
+//nolint:gocyclo // Each block checks one isolated vulnerability condition; complexity is intentional
 func countK01Changes(originalDep, modifiedDep *appsv1.Deployment) int {
 	container := &modifiedDep.Spec.Template.Spec.Containers[0]
 	originalContainer := &originalDep.Spec.Template.Spec.Containers[0]
@@ -79,8 +81,10 @@ func countK01Changes(originalDep, modifiedDep *appsv1.Deployment) int {
 		changesCount++
 	}
 
-	// Check hostPID enabled (sub-issue 3): baseline has hostPID=false, vulnerability sets it true
-	if !originalDep.Spec.Template.Spec.HostPID && modifiedDep.Spec.Template.Spec.HostPID {
+	// Check fsGroup removed (sub-issue 3): baseline has fsGroup set, vulnerability removes it
+	origFSGroup := originalDep.Spec.Template.Spec.SecurityContext != nil && originalDep.Spec.Template.Spec.SecurityContext.FSGroup != nil
+	modFSGroup := modifiedDep.Spec.Template.Spec.SecurityContext != nil && modifiedDep.Spec.Template.Spec.SecurityContext.FSGroup != nil
+	if origFSGroup && !modFSGroup {
 		changesCount++
 	}
 
@@ -93,6 +97,36 @@ func countK01Changes(originalDep, modifiedDep *appsv1.Deployment) int {
 
 	// Check resource limits removed (sub-issue 5)
 	if (len(originalContainer.Resources.Limits) > 0) != (len(container.Resources.Limits) > 0) {
+		changesCount++
+	}
+
+	// Check hostPID/hostIPC enabled (sub-issue 6)
+	if originalDep.Spec.Template.Spec.HostPID != modifiedDep.Spec.Template.Spec.HostPID ||
+		originalDep.Spec.Template.Spec.HostIPC != modifiedDep.Spec.Template.Spec.HostIPC {
+		changesCount++
+	}
+
+	// Check hostNetwork enabled (sub-issue 7)
+	if originalDep.Spec.Template.Spec.HostNetwork != modifiedDep.Spec.Template.Spec.HostNetwork {
+		changesCount++
+	}
+
+	// Check hostPath volume added (sub-issue 8)
+	origHostPath := false
+	for _, v := range originalDep.Spec.Template.Spec.Volumes {
+		if v.HostPath != nil {
+			origHostPath = true
+			break
+		}
+	}
+	modHostPath := false
+	for _, v := range modifiedDep.Spec.Template.Spec.Volumes {
+		if v.HostPath != nil {
+			modHostPath = true
+			break
+		}
+	}
+	if origHostPath != modHostPath {
 		changesCount++
 	}
 
@@ -415,6 +449,7 @@ func TestK08MakesFocusedChanges(t *testing.T) {
 
 // Deterministic sub-issue selection tests
 
+//nolint:gocyclo // Test function needs to check multiple vulnerability types
 func TestK01SubIssueSelection(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -471,6 +506,62 @@ func TestK01SubIssueSelection(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:     "subIssue 3: missing fsGroup",
+			subIssue: 3,
+			verify: func(t *testing.T, dep *appsv1.Deployment) {
+				if dep.Spec.Template.Spec.SecurityContext != nil && dep.Spec.Template.Spec.SecurityContext.FSGroup != nil {
+					t.Error("expected FSGroup to be nil after applying sub-issue 3")
+				}
+			},
+		},
+		{
+			name:     "subIssue 6: hostPID and hostIPC",
+			subIssue: 6,
+			verify: func(t *testing.T, dep *appsv1.Deployment) {
+				if !dep.Spec.Template.Spec.HostPID {
+					t.Error("expected HostPID == true")
+				}
+				if !dep.Spec.Template.Spec.HostIPC {
+					t.Error("expected HostIPC == true")
+				}
+			},
+		},
+		{
+			name:     "subIssue 7: hostNetwork",
+			subIssue: 7,
+			verify: func(t *testing.T, dep *appsv1.Deployment) {
+				if !dep.Spec.Template.Spec.HostNetwork {
+					t.Error("expected HostNetwork == true")
+				}
+			},
+		},
+		{
+			name:     "subIssue 8: hostPath volume",
+			subIssue: 8,
+			verify: func(t *testing.T, dep *appsv1.Deployment) {
+				foundHostPath := false
+				for _, vol := range dep.Spec.Template.Spec.Volumes {
+					if vol.HostPath != nil && vol.HostPath.Path == "/var/log" {
+						foundHostPath = true
+						break
+					}
+				}
+				if !foundHostPath {
+					t.Error("expected hostPath volume with path /var/log")
+				}
+				foundMount := false
+				for _, vm := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+					if vm.Name == "host-data" && vm.MountPath == "/host-log" {
+						foundMount = true
+						break
+					}
+				}
+				if !foundMount {
+					t.Error("expected volumeMount 'host-data' at /host-log")
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -493,6 +584,7 @@ func TestK01SubIssueSelection(t *testing.T) {
 	}
 }
 
+//nolint:gocyclo // Test function needs to check multiple vulnerability types
 func TestK03SubIssueSelection(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -562,6 +654,94 @@ func TestK03SubIssueSelection(t *testing.T) {
 				}
 				if !foundBinding {
 					t.Error("expected RoleBinding with name '<ns>-secrets-binding'")
+				}
+			},
+		},
+		{
+			name:     "subIssue 4: wildcard permissions",
+			subIssue: 4,
+			verify: func(t *testing.T, stack []client.Object, ns string) {
+				foundRole := false
+				foundBinding := false
+				for _, obj := range stack {
+					if role, ok := obj.(*rbacv1.Role); ok && role.Name == fmt.Sprintf("%s-wildcard-role", ns) {
+						foundRole = true
+					}
+					if binding, ok := obj.(*rbacv1.RoleBinding); ok && binding.Name == fmt.Sprintf("%s-wildcard-binding", ns) {
+						foundBinding = true
+					}
+				}
+				if !foundRole {
+					t.Error("expected Role with name '<ns>-wildcard-role'")
+				}
+				if !foundBinding {
+					t.Error("expected RoleBinding with name '<ns>-wildcard-binding'")
+				}
+			},
+		},
+		{
+			name:     "subIssue 5: exec and portforward",
+			subIssue: 5,
+			verify: func(t *testing.T, stack []client.Object, ns string) {
+				foundRole := false
+				foundBinding := false
+				for _, obj := range stack {
+					if role, ok := obj.(*rbacv1.Role); ok && role.Name == fmt.Sprintf("%s-exec-portforward-role", ns) {
+						foundRole = true
+					}
+					if binding, ok := obj.(*rbacv1.RoleBinding); ok && binding.Name == fmt.Sprintf("%s-exec-portforward-binding", ns) {
+						foundBinding = true
+					}
+				}
+				if !foundRole {
+					t.Error("expected Role with name '<ns>-exec-portforward-role'")
+				}
+				if !foundBinding {
+					t.Error("expected RoleBinding with name '<ns>-exec-portforward-binding'")
+				}
+			},
+		},
+		{
+			name:     "subIssue 6: delete capabilities",
+			subIssue: 6,
+			verify: func(t *testing.T, stack []client.Object, ns string) {
+				foundRole := false
+				foundBinding := false
+				for _, obj := range stack {
+					if role, ok := obj.(*rbacv1.Role); ok && role.Name == fmt.Sprintf("%s-delete-role", ns) {
+						foundRole = true
+					}
+					if binding, ok := obj.(*rbacv1.RoleBinding); ok && binding.Name == fmt.Sprintf("%s-delete-binding", ns) {
+						foundBinding = true
+					}
+				}
+				if !foundRole {
+					t.Error("expected Role with name '<ns>-delete-role'")
+				}
+				if !foundBinding {
+					t.Error("expected RoleBinding with name '<ns>-delete-binding'")
+				}
+			},
+		},
+		{
+			name:     "subIssue 7: pod creation",
+			subIssue: 7,
+			verify: func(t *testing.T, stack []client.Object, ns string) {
+				foundRole := false
+				foundBinding := false
+				for _, obj := range stack {
+					if role, ok := obj.(*rbacv1.Role); ok && role.Name == fmt.Sprintf("%s-pod-create-role", ns) {
+						foundRole = true
+					}
+					if binding, ok := obj.(*rbacv1.RoleBinding); ok && binding.Name == fmt.Sprintf("%s-pod-create-binding", ns) {
+						foundBinding = true
+					}
+				}
+				if !foundRole {
+					t.Error("expected Role with name '<ns>-pod-create-role'")
+				}
+				if !foundBinding {
+					t.Error("expected RoleBinding with name '<ns>-pod-create-binding'")
 				}
 			},
 		},
@@ -860,11 +1040,11 @@ func TestK01SubIssueOutOfRange(t *testing.T) {
 		t.Error("expected error for subIssue -1")
 	}
 
-	// Test subIssue 6 (out of range for K01 which has 0-5)
-	invalidSub = 6
+	// Test subIssue 9 (out of range for K01 which has 0-8)
+	invalidSub = 9
 	_, err = applyK01ToStack(appStack, "api", &invalidSub, nil)
 	if err == nil {
-		t.Error("expected error for subIssue 6")
+		t.Error("expected error for subIssue 9")
 	}
 }
 
@@ -889,11 +1069,11 @@ func TestK03SubIssueOutOfRange(t *testing.T) {
 		t.Error("expected error for subIssue -1")
 	}
 
-	// Test subIssue 4 (out of range for K03 which has 0-3)
-	invalidSub = 4
+	// Test subIssue 8 (out of range for K03 which has 0-7)
+	invalidSub = 8
 	_, err = applyK03ToStack(&appStack, "api", namespace, &invalidSub, nil)
 	if err == nil {
-		t.Error("expected error for subIssue 4")
+		t.Error("expected error for subIssue 8")
 	}
 }
 

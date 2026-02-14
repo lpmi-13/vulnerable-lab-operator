@@ -46,12 +46,12 @@ $ kubescape scan --include-namespaces test-lab
 
 - scan a specific deployment in the namespace with kubescape
 ```sh
-$ kubescape scan workload Deployment/<deployment-name> --include-namespaces test-lab
+$ kubescape scan workload Deployment/<deployment-name> --include namespaces test-lab
 ```
 
 - scan with kubescape using one of the built-in frameworks (nsa/mitre)
 ```sh
-$ kubescape scan framework mitre --include-namespaces -n test-lab
+$ kubescape scan framework mitre --include-namespaces test-lab
 ```
 > some of the vulnerabilities don't show up in the stock kubescape scan, so if you don't see something in one of the above scans, try each of the frameworks.
 
@@ -66,7 +66,7 @@ $ kubectl api-resources --verbs=list --namespaced -o name \
 
 Each vulnerability category has multiple sub-issues that are randomly selected:
 
-- K01 (Insecure Workload Configurations) - 6 sub-issues:
+- K01 (Insecure Workload Configurations) - 9 sub-issues:
 
   1. Privileged container - Sets privileged: true (Kubescape C-0057)
   2. Running as root - Sets runAsUser: 0 (Kubescape C-0013)
@@ -74,13 +74,20 @@ Each vulnerability category has multiple sub-issues that are randomly selected:
   4. Missing fsGroup - Removes fsGroup from PodSecurityContext (Kubescape C-0211)
   5. ReadOnlyRootFilesystem disabled - Sets readOnlyRootFilesystem: false (Kubescape C-0017)
   6. Missing resource limits - Removes CPU/memory resource limits (Kubescape C-0009, C-0004)
+  7. Host PID/IPC access - Sets hostPID: true and hostIPC: true (Kubescape C-0038)
+  8. HostNetwork access - Sets hostNetwork: true (Kubescape C-0041)
+  9. HostPath volume mount - Mounts host /var/log via hostPath volume (Kubescape C-0048)
 
-- K03 (Overly Permissive RBAC) - 4 sub-issues:
+- K03 (Overly Permissive RBAC) - 8 sub-issues:
 
   1. Namespace Overpermissive Access - Grants excessive permissions within namespace (secrets, configmaps, deployments)
   2. Default Service Account Permissions - Grants unnecessary create/list/watch permissions to service account
   3. Excessive Secrets Access - Grants broad secret read and pod delete permissions within namespace
   4. ClusterRoleBinding to cluster-admin - Binds service account to cluster-admin ClusterRole (Kubescape C-0185)
+  5. Wildcard permissions - Grants wildcard verbs/resources in a Role (Kubescape C-0187)
+  6. Exec and portforward access - Grants pods/exec and pods/portforward permissions (Kubescape C-0063, C-0002)
+  7. Delete capabilities - Grants broad delete verb across core resources (Kubescape C-0007)
+  8. Pod creation access - Grants pods create permission within namespace (Kubescape C-0188)
 
 - K06 (Broken Authentication) - 3 sub-issues:
 

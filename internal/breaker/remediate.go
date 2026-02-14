@@ -89,9 +89,9 @@ func checkK01BySubIssue(ctx context.Context, dep *appsv1.Deployment, targetDeplo
 				}
 			}
 		}
-	case 3: // Host PID namespace
-		if dep.Spec.Template.Spec.HostPID {
-			logger.Info("K01 vulnerability still active: hostPID enabled", "target", targetDeployment)
+	case 3: // Missing fsGroup in PodSecurityContext
+		if dep.Spec.Template.Spec.SecurityContext == nil || dep.Spec.Template.Spec.SecurityContext.FSGroup == nil {
+			logger.Info("K01 vulnerability still active: fsGroup missing from PodSecurityContext", "target", targetDeployment)
 			return false, nil
 		}
 	case 4: // ReadOnlyRootFilesystem disabled
@@ -103,6 +103,23 @@ func checkK01BySubIssue(ctx context.Context, dep *appsv1.Deployment, targetDeplo
 		if len(container.Resources.Limits) == 0 {
 			logger.Info("K01 vulnerability still active: missing resource limits", "target", targetDeployment)
 			return false, nil
+		}
+	case 6: // Host PID/IPC access
+		if dep.Spec.Template.Spec.HostPID || dep.Spec.Template.Spec.HostIPC {
+			logger.Info("K01 vulnerability still active: hostPID/hostIPC enabled", "target", targetDeployment)
+			return false, nil
+		}
+	case 7: // HostNetwork access
+		if dep.Spec.Template.Spec.HostNetwork {
+			logger.Info("K01 vulnerability still active: hostNetwork enabled", "target", targetDeployment)
+			return false, nil
+		}
+	case 8: // HostPath volume mount
+		for _, vol := range dep.Spec.Template.Spec.Volumes {
+			if vol.HostPath != nil {
+				logger.Info("K01 vulnerability still active: hostPath volume present", "target", targetDeployment)
+				return false, nil
+			}
 		}
 	}
 	logger.Info("K01 vulnerability remediated", "target", targetDeployment, "subIssue", subIssue)
@@ -136,8 +153,8 @@ func checkK01All(ctx context.Context, dep *appsv1.Deployment, targetDeployment s
 			return false, nil
 		}
 	}
-	if dep.Spec.Template.Spec.HostPID {
-		logger.Info("K01 vulnerability still active: hostPID enabled", "target", targetDeployment)
+	if dep.Spec.Template.Spec.SecurityContext == nil || dep.Spec.Template.Spec.SecurityContext.FSGroup == nil {
+		logger.Info("K01 vulnerability still active: fsGroup missing from PodSecurityContext", "target", targetDeployment)
 		return false, nil
 	}
 	if len(container.Resources.Limits) == 0 {
@@ -150,6 +167,8 @@ func checkK01All(ctx context.Context, dep *appsv1.Deployment, targetDeployment s
 
 // checkK02 verifies if the supply chain vulnerability has been fixed by checking image versions
 // checkK03 verifies if the RBAC vulnerability has been fixed
+//
+//nolint:gocyclo // Each switch case checks one isolated RBAC resource; complexity is intentional
 func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace string, subIssue *int) (bool, error) {
 	logger := log.FromContext(ctx)
 
@@ -209,6 +228,66 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 				return false, nil
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check ClusterRoleBinding %s: %w", clusterBindingName, err)
+			}
+		case 4: // Wildcard permissions role + binding
+			role := &rbacv1.Role{}
+			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-wildcard-role", namespace), Namespace: namespace}, role); err == nil {
+				logger.Info("K03 vulnerability still active: wildcard role exists", "target", targetDeployment)
+				return false, nil
+			} else if !errors.IsNotFound(err) {
+				return false, fmt.Errorf("failed to check wildcard role: %w", err)
+			}
+			binding := &rbacv1.RoleBinding{}
+			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-wildcard-binding", namespace), Namespace: namespace}, binding); err == nil {
+				logger.Info("K03 vulnerability still active: wildcard binding exists", "target", targetDeployment)
+				return false, nil
+			} else if !errors.IsNotFound(err) {
+				return false, fmt.Errorf("failed to check wildcard binding: %w", err)
+			}
+		case 5: // exec + portforward role + binding
+			role := &rbacv1.Role{}
+			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-exec-portforward-role", namespace), Namespace: namespace}, role); err == nil {
+				logger.Info("K03 vulnerability still active: exec/portforward role exists", "target", targetDeployment)
+				return false, nil
+			} else if !errors.IsNotFound(err) {
+				return false, fmt.Errorf("failed to check exec/portforward role: %w", err)
+			}
+			binding := &rbacv1.RoleBinding{}
+			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-exec-portforward-binding", namespace), Namespace: namespace}, binding); err == nil {
+				logger.Info("K03 vulnerability still active: exec/portforward binding exists", "target", targetDeployment)
+				return false, nil
+			} else if !errors.IsNotFound(err) {
+				return false, fmt.Errorf("failed to check exec/portforward binding: %w", err)
+			}
+		case 6: // Delete capabilities role + binding
+			role := &rbacv1.Role{}
+			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-delete-role", namespace), Namespace: namespace}, role); err == nil {
+				logger.Info("K03 vulnerability still active: delete role exists", "target", targetDeployment)
+				return false, nil
+			} else if !errors.IsNotFound(err) {
+				return false, fmt.Errorf("failed to check delete role: %w", err)
+			}
+			binding := &rbacv1.RoleBinding{}
+			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-delete-binding", namespace), Namespace: namespace}, binding); err == nil {
+				logger.Info("K03 vulnerability still active: delete binding exists", "target", targetDeployment)
+				return false, nil
+			} else if !errors.IsNotFound(err) {
+				return false, fmt.Errorf("failed to check delete binding: %w", err)
+			}
+		case 7: // Pod creation role + binding
+			role := &rbacv1.Role{}
+			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-pod-create-role", namespace), Namespace: namespace}, role); err == nil {
+				logger.Info("K03 vulnerability still active: pod-create role exists", "target", targetDeployment)
+				return false, nil
+			} else if !errors.IsNotFound(err) {
+				return false, fmt.Errorf("failed to check pod-create role: %w", err)
+			}
+			binding := &rbacv1.RoleBinding{}
+			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-pod-create-binding", namespace), Namespace: namespace}, binding); err == nil {
+				logger.Info("K03 vulnerability still active: pod-create binding exists", "target", targetDeployment)
+				return false, nil
+			} else if !errors.IsNotFound(err) {
+				return false, fmt.Errorf("failed to check pod-create binding: %w", err)
 			}
 		}
 		logger.Info("K03 vulnerability remediated", "target", targetDeployment, "subIssue", *subIssue)
