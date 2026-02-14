@@ -134,8 +134,6 @@ func preserveImmutableFields(obj, existing client.Object) {
 	}
 }
 
-// These helper functions are no longer needed since we use the baseline stack directly
-
 // createNamespaceIfNotExists ensures the lab namespace exists
 func createNamespaceIfNotExists(ctx context.Context, c client.Client, namespace string) error {
 	ns := &corev1.Namespace{
@@ -151,8 +149,6 @@ func createNamespaceIfNotExists(ctx context.Context, c client.Client, namespace 
 	}
 	return nil
 }
-
-// InitializeLab function is no longer used - replaced by BreakCluster with build-with-vulnerabilities approach
 
 // applyK01ToStack modifies the baseline stack to apply insecure workload configurations
 func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue *int, rng *rand.Rand) (int, error) {
@@ -242,7 +238,6 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 	return 0, fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
 }
 
-// applyK02ToStack modifies the baseline stack to apply supply chain vulnerabilities
 // applyK03ToStack modifies the baseline stack to apply overly permissive RBAC configurations
 func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
 	// Find and modify the target deployment within the stack
@@ -792,8 +787,8 @@ func moveSecretsToConfigMap(appStack *[]client.Object, targetDeployment, namespa
 		},
 	}
 
-	// Find the target deployment and modify it to use ConfigMap
-	for _, obj := range *appStack {
+	// Find the target deployment, add env vars, and insert the ConfigMap immediately after it
+	for i, obj := range *appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
 			container := &dep.Spec.Template.Spec.Containers[0]
 
@@ -822,22 +817,13 @@ func moveSecretsToConfigMap(appStack *[]client.Object, targetDeployment, namespa
 					},
 				},
 			}
-
-			// Add the config-based environment variables
 			container.Env = append(container.Env, configEnvs...)
-			break
-		}
-	}
 
-	// Add the ConfigMap to the stack
-	for i, obj := range *appStack {
-		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
-			// Insert ConfigMap right after the deployment
+			// Insert ConfigMap right after the deployment in a single pass
 			*appStack = append((*appStack)[:i+1], append([]client.Object{insecureConfigMap}, (*appStack)[i+1:]...)...)
 			break
 		}
 	}
-
 }
 
 // addSecretsInPodAnnotations adds sensitive data to pod template annotations
@@ -859,5 +845,3 @@ func addSecretsInPodAnnotations(appStack *[]client.Object, targetDeployment stri
 	}
 	return fmt.Errorf("target deployment %s not found", targetDeployment)
 }
-
-// The old functions below are no longer used - they've been replaced by the ToStack variants above
