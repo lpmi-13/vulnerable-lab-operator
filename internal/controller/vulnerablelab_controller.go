@@ -457,14 +457,14 @@ func (r *VulnerableLabReconciler) selectRandomIndex(arrayLength int) int {
 func (r *VulnerableLabReconciler) cleanupOrphanedK03Resources(ctx context.Context, namespace string) {
 	logger := log.FromContext(ctx)
 
-	// Define all possible K03 RBAC resource pairs
+	// Define all possible K03 RBAC resource pairs (names match breaker.go naming convention)
 	rbacPairs := []struct {
 		roleName        string
 		roleBindingName string
 	}{
-		{"test-lab-overpermissive", "test-lab-overpermissive-binding"},
-		{"test-lab-default-permissions", "test-lab-default-binding"},
-		{"test-lab-secrets-reader", "test-lab-secrets-binding"},
+		{namespace + "-overpermissive", namespace + "-overpermissive-binding"},
+		{namespace + "-default-permissions", namespace + "-default-binding"},
+		{namespace + "-secrets-reader", namespace + "-secrets-binding"},
 	}
 
 	for _, pair := range rbacPairs {
