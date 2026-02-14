@@ -845,4 +845,3 @@ func addSecretsInPodAnnotations(appStack *[]client.Object, targetDeployment stri
 	}
 	return fmt.Errorf("target deployment %s not found", targetDeployment)
 }
-
