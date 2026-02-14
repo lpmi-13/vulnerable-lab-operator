@@ -51,7 +51,7 @@ $ kubescape scan workload Deployment/<deployment-name> --include-namespaces test
 
 - scan with kubescape using one of the built-in frameworks (nsa/mitre)
 ```sh
-$ kubescape scan mitre --include-namespaces -n test-lab
+$ kubescape scan framework mitre --include-namespaces -n test-lab
 ```
 > some of the vulnerabilities don't show up in the stock kubescape scan, so if you don't see something in one of the above scans, try each of the frameworks.
 
