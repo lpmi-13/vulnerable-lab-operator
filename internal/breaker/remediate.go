@@ -89,9 +89,9 @@ func checkK01BySubIssue(ctx context.Context, dep *appsv1.Deployment, targetDeplo
 				}
 			}
 		}
-	case 3: // Missing fsGroup in PodSecurityContext
-		if dep.Spec.Template.Spec.SecurityContext == nil || dep.Spec.Template.Spec.SecurityContext.FSGroup == nil {
-			logger.Info("K01 vulnerability still active: fsGroup missing from PodSecurityContext", "target", targetDeployment)
+	case 3: // Allow privilege escalation
+		if container.SecurityContext != nil && container.SecurityContext.AllowPrivilegeEscalation != nil && *container.SecurityContext.AllowPrivilegeEscalation {
+			logger.Info("K01 vulnerability still active: allowPrivilegeEscalation is true", "target", targetDeployment)
 			return false, nil
 		}
 	case 4: // ReadOnlyRootFilesystem disabled
@@ -153,8 +153,8 @@ func checkK01All(ctx context.Context, dep *appsv1.Deployment, targetDeployment s
 			return false, nil
 		}
 	}
-	if dep.Spec.Template.Spec.SecurityContext == nil || dep.Spec.Template.Spec.SecurityContext.FSGroup == nil {
-		logger.Info("K01 vulnerability still active: fsGroup missing from PodSecurityContext", "target", targetDeployment)
+	if container.SecurityContext != nil && container.SecurityContext.AllowPrivilegeEscalation != nil && *container.SecurityContext.AllowPrivilegeEscalation {
+		logger.Info("K01 vulnerability still active: allowPrivilegeEscalation is true", "target", targetDeployment)
 		return false, nil
 	}
 	if len(container.Resources.Limits) == 0 {
@@ -456,45 +456,41 @@ func checkK07BySubIssue(ctx context.Context, c client.Client, targetDeployment, 
 		} else if err != nil {
 			return false, fmt.Errorf("failed to check network policy: %w", err)
 		}
-	case 1: // Allow-all NetworkPolicy exists
-		allowAllPolicy := &networkingv1.NetworkPolicy{}
-		if err := c.Get(ctx, client.ObjectKey{Name: "allow-all-traffic", Namespace: namespace}, allowAllPolicy); err == nil {
-			logger.Info("K07 vulnerability still active: allow-all network policy exists", "target", targetDeployment)
-			return false, nil
-		} else if !errors.IsNotFound(err) {
-			return false, fmt.Errorf("failed to check allow-all policy: %w", err)
-		}
-	case 2: // Postgres service exposed as NodePort
-		postgresSvc := &corev1.Service{}
-		if err := c.Get(ctx, client.ObjectKey{Name: "postgres-service", Namespace: namespace}, postgresSvc); err == nil {
-			if postgresSvc.Spec.Type == corev1.ServiceTypeNodePort {
-				logger.Info("K07 vulnerability still active: postgres service exposed as NodePort", "target", targetDeployment)
+	case 1: // Data tier network policies removed
+		for _, name := range []string{"postgres-network-policy", "redis-network-policy"} {
+			netpol := &networkingv1.NetworkPolicy{}
+			if err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, netpol); errors.IsNotFound(err) {
+				logger.Info("K07 vulnerability still active: network policy missing", "target", targetDeployment, "policy", name)
 				return false, nil
+			} else if err != nil {
+				return false, fmt.Errorf("failed to check network policy %s: %w", name, err)
 			}
-		} else if !errors.IsNotFound(err) {
-			return false, fmt.Errorf("failed to check postgres service: %w", err)
 		}
-	case 3: // Postgres service exposed as LoadBalancer
-		postgresSvc := &corev1.Service{}
-		if err := c.Get(ctx, client.ObjectKey{Name: "postgres-service", Namespace: namespace}, postgresSvc); err == nil {
-			if postgresSvc.Spec.Type == corev1.ServiceTypeLoadBalancer {
-				logger.Info("K07 vulnerability still active: postgres service exposed as LoadBalancer", "target", targetDeployment)
-				return false, nil
-			}
-		} else if !errors.IsNotFound(err) {
-			return false, fmt.Errorf("failed to check postgres service: %w", err)
-		}
-	case 4: // Overly permissive egress in network policy
+	case 2: // Backend microservice network policy removed
 		netpol := &networkingv1.NetworkPolicy{}
-		if err := c.Get(ctx, client.ObjectKey{Name: "api-network-policy", Namespace: namespace}, netpol); err == nil {
-			for _, egress := range netpol.Spec.Egress {
-				if len(egress.To) == 0 {
-					logger.Info("K07 vulnerability still active: overly permissive egress in network policy", "target", targetDeployment)
-					return false, nil
-				}
+		if err := c.Get(ctx, client.ObjectKey{Name: "user-service-network-policy", Namespace: namespace}, netpol); errors.IsNotFound(err) {
+			logger.Info("K07 vulnerability still active: network policy missing", "target", targetDeployment)
+			return false, nil
+		} else if err != nil {
+			return false, fmt.Errorf("failed to check network policy: %w", err)
+		}
+	case 3: // Monitoring tier network policies removed
+		for _, name := range []string{"prometheus-network-policy", "grafana-network-policy"} {
+			netpol := &networkingv1.NetworkPolicy{}
+			if err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, netpol); errors.IsNotFound(err) {
+				logger.Info("K07 vulnerability still active: network policy missing", "target", targetDeployment, "policy", name)
+				return false, nil
+			} else if err != nil {
+				return false, fmt.Errorf("failed to check network policy %s: %w", name, err)
 			}
-		} else if !errors.IsNotFound(err) {
-			return false, fmt.Errorf("failed to check network policy egress: %w", err)
+		}
+	case 4: // Frontend network policy removed
+		netpol := &networkingv1.NetworkPolicy{}
+		if err := c.Get(ctx, client.ObjectKey{Name: "webapp-network-policy", Namespace: namespace}, netpol); errors.IsNotFound(err) {
+			logger.Info("K07 vulnerability still active: network policy missing", "target", targetDeployment)
+			return false, nil
+		} else if err != nil {
+			return false, fmt.Errorf("failed to check network policy: %w", err)
 		}
 	}
 	logger.Info("K07 vulnerability remediated", "target", targetDeployment, "subIssue", subIssue)
@@ -506,46 +502,24 @@ func checkK07All(ctx context.Context, c client.Client, targetDeployment, namespa
 	logger := log.FromContext(ctx)
 	vulnerabilitiesFound := false
 
-	netpol := &networkingv1.NetworkPolicy{}
-	err := c.Get(ctx, client.ObjectKey{Name: "api-network-policy", Namespace: namespace}, netpol)
-	if errors.IsNotFound(err) {
-		logger.Info("K07 vulnerability still active: network policy missing", "target", targetDeployment)
-		vulnerabilitiesFound = true
-	} else if err != nil {
-		return false, fmt.Errorf("failed to check network policy: %w", err)
+	allPolicies := []string{
+		"api-network-policy",
+		"postgres-network-policy",
+		"redis-network-policy",
+		"user-service-network-policy",
+		"prometheus-network-policy",
+		"grafana-network-policy",
+		"webapp-network-policy",
+		"frontend-network-policy",
 	}
 
-	allowAllPolicy := &networkingv1.NetworkPolicy{}
-	err = c.Get(ctx, client.ObjectKey{Name: "allow-all-traffic", Namespace: namespace}, allowAllPolicy)
-	if err == nil {
-		logger.Info("K07 vulnerability still active: allow-all network policy exists", "target", targetDeployment)
-		vulnerabilitiesFound = true
-	} else if !errors.IsNotFound(err) {
-		return false, fmt.Errorf("failed to check allow-all policy: %w", err)
-	}
-
-	postgresSvc := &corev1.Service{}
-	err = c.Get(ctx, client.ObjectKey{Name: "postgres-service", Namespace: namespace}, postgresSvc)
-	if err == nil {
-		if postgresSvc.Spec.Type == corev1.ServiceTypeNodePort {
-			logger.Info("K07 vulnerability still active: postgres service exposed as NodePort", "target", targetDeployment)
+	for _, name := range allPolicies {
+		netpol := &networkingv1.NetworkPolicy{}
+		if err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, netpol); errors.IsNotFound(err) {
+			logger.Info("K07 vulnerability still active: network policy missing", "target", targetDeployment, "policy", name)
 			vulnerabilitiesFound = true
-		}
-		if postgresSvc.Spec.Type == corev1.ServiceTypeLoadBalancer {
-			logger.Info("K07 vulnerability still active: postgres service exposed as LoadBalancer", "target", targetDeployment)
-			vulnerabilitiesFound = true
-		}
-	} else if !errors.IsNotFound(err) {
-		return false, fmt.Errorf("failed to check postgres service: %w", err)
-	}
-
-	if netpol != nil && netpol.Name != "" {
-		for _, egress := range netpol.Spec.Egress {
-			if len(egress.To) == 0 {
-				logger.Info("K07 vulnerability still active: overly permissive egress in network policy", "target", targetDeployment)
-				vulnerabilitiesFound = true
-				break
-			}
+		} else if err != nil {
+			return false, fmt.Errorf("failed to check network policy %s: %w", name, err)
 		}
 	}
 

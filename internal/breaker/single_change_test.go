@@ -30,16 +30,6 @@ func findDeployment(stack []client.Object) *appsv1.Deployment {
 	return nil
 }
 
-// findService finds a service by name in the given stack
-func findService(stack []client.Object, name string) *corev1.Service {
-	for _, obj := range stack {
-		if svc, ok := obj.(*corev1.Service); ok && svc.Name == name {
-			return svc
-		}
-	}
-	return nil
-}
-
 // countK01Changes counts the number of K01-relevant workload configuration changes
 //
 //nolint:gocyclo // Each block checks one isolated vulnerability condition; complexity is intentional
@@ -81,10 +71,10 @@ func countK01Changes(originalDep, modifiedDep *appsv1.Deployment) int {
 		changesCount++
 	}
 
-	// Check fsGroup removed (sub-issue 3): baseline has fsGroup set, vulnerability removes it
-	origFSGroup := originalDep.Spec.Template.Spec.SecurityContext != nil && originalDep.Spec.Template.Spec.SecurityContext.FSGroup != nil
-	modFSGroup := modifiedDep.Spec.Template.Spec.SecurityContext != nil && modifiedDep.Spec.Template.Spec.SecurityContext.FSGroup != nil
-	if origFSGroup && !modFSGroup {
+	// Check allowPrivilegeEscalation changed to true (sub-issue 3)
+	origAPE := originalContainer.SecurityContext != nil && originalContainer.SecurityContext.AllowPrivilegeEscalation != nil && *originalContainer.SecurityContext.AllowPrivilegeEscalation
+	modAPE := container.SecurityContext != nil && container.SecurityContext.AllowPrivilegeEscalation != nil && *container.SecurityContext.AllowPrivilegeEscalation
+	if origAPE != modAPE {
 		changesCount++
 	}
 
@@ -294,24 +284,25 @@ func TestK06MakesFocusedChanges(t *testing.T) {
 
 // detectK07NetworkPolicyVulnerability checks for K07 network policy related vulnerabilities
 func detectK07NetworkPolicyVulnerability(appStack []client.Object) (bool, string) {
-	hasNetworkPolicy := false
+	allPolicies := []string{
+		"api-network-policy",
+		"postgres-network-policy",
+		"redis-network-policy",
+		"user-service-network-policy",
+		"prometheus-network-policy",
+		"grafana-network-policy",
+		"webapp-network-policy",
+	}
+	presentPolicies := make(map[string]struct{})
 	for _, obj := range appStack {
 		if np, ok := obj.(*networkingv1.NetworkPolicy); ok {
-			hasNetworkPolicy = true
-			if np.Name == "allow-all-traffic" {
-				return true, "Added allow-all NetworkPolicy"
-			}
-			if np.Name == "api-network-policy" {
-				for _, egress := range np.Spec.Egress {
-					if len(egress.To) == 0 {
-						return true, "Applied overly permissive egress in network policy"
-					}
-				}
-			}
+			presentPolicies[np.Name] = struct{}{}
 		}
 	}
-	if !hasNetworkPolicy {
-		return true, "Removed NetworkPolicy from stack"
+	for _, name := range allPolicies {
+		if _, exists := presentPolicies[name]; !exists {
+			return true, "Removed NetworkPolicy from stack: " + name
+		}
 	}
 	return false, ""
 }
@@ -323,50 +314,14 @@ func TestK07MakesFocusedChanges(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		appStack := baseline.GetAppStack(namespace)
 
-		var originalPostgresSvc *corev1.Service
-		for _, obj := range appStack {
-			if svc, ok := obj.(*corev1.Service); ok && svc.Name == "postgres-service" {
-				originalPostgresSvc = svc.DeepCopy()
-			}
-		}
-		if originalPostgresSvc == nil {
-			t.Fatal("Could not find postgres-service in baseline stack")
-		}
-
 		if _, err := applyK07ToStack(&appStack, "api", namespace, nil, rng); err != nil {
 			t.Fatalf("applyK07ToStack failed: %v", err)
 		}
 
-		var modifiedPostgresSvc *corev1.Service
-		for _, obj := range appStack {
-			if svc, ok := obj.(*corev1.Service); ok && svc.Name == "postgres-service" {
-				modifiedPostgresSvc = svc
-			}
-		}
-		if modifiedPostgresSvc == nil {
-			t.Fatal("Could not find postgres-service after K07 application")
-		}
-
-		vulnerabilityFound := false
-
-		// Check cases 0, 1, 4: network policy changes
-		if found, msg := detectK07NetworkPolicyVulnerability(appStack); found {
-			vulnerabilityFound = true
-			t.Logf("K07 iteration %d: %s", i, msg)
-		}
-
-		// Check Case 2/3: Postgres service exposure
-		if modifiedPostgresSvc.Spec.Type == corev1.ServiceTypeNodePort && originalPostgresSvc.Spec.Type != corev1.ServiceTypeNodePort {
-			vulnerabilityFound = true
-			t.Logf("K07 iteration %d: Applied postgres service NodePort exposure", i)
-		}
-		if modifiedPostgresSvc.Spec.Type == corev1.ServiceTypeLoadBalancer && originalPostgresSvc.Spec.Type != corev1.ServiceTypeLoadBalancer {
-			vulnerabilityFound = true
-			t.Logf("K07 iteration %d: Applied postgres service LoadBalancer exposure", i)
-		}
-
-		if !vulnerabilityFound {
+		if found, msg := detectK07NetworkPolicyVulnerability(appStack); !found {
 			t.Errorf("K07 iteration %d: No network vulnerability detected", i)
+		} else {
+			t.Logf("K07 iteration %d: %s", i, msg)
 		}
 	}
 }
@@ -507,11 +462,12 @@ func TestK01SubIssueSelection(t *testing.T) {
 			},
 		},
 		{
-			name:     "subIssue 3: missing fsGroup",
+			name:     "subIssue 3: allow privilege escalation",
 			subIssue: 3,
 			verify: func(t *testing.T, dep *appsv1.Deployment) {
-				if dep.Spec.Template.Spec.SecurityContext != nil && dep.Spec.Template.Spec.SecurityContext.FSGroup != nil {
-					t.Error("expected FSGroup to be nil after applying sub-issue 3")
+				container := &dep.Spec.Template.Spec.Containers[0]
+				if container.SecurityContext == nil || container.SecurityContext.AllowPrivilegeEscalation == nil || !*container.SecurityContext.AllowPrivilegeEscalation {
+					t.Error("expected AllowPrivilegeEscalation == true")
 				}
 			},
 		},
@@ -839,6 +795,17 @@ func TestK06SubIssueSelection(t *testing.T) {
 }
 
 func TestK07SubIssueSelection(t *testing.T) {
+	hasPolicies := func(t *testing.T, stack []client.Object) map[string]bool {
+		t.Helper()
+		present := make(map[string]bool)
+		for _, obj := range stack {
+			if np, ok := obj.(*networkingv1.NetworkPolicy); ok {
+				present[np.Name] = true
+			}
+		}
+		return present
+	}
+
 	tests := []struct {
 		name     string
 		subIssue int
@@ -856,55 +823,58 @@ func TestK07SubIssueSelection(t *testing.T) {
 			},
 		},
 		{
-			name:     "subIssue 1: allow-all NetworkPolicy",
+			name:     "subIssue 1: data tier policies removed",
 			subIssue: 1,
 			verify: func(t *testing.T, stack []client.Object) {
-				found := false
-				for _, obj := range stack {
-					if np, ok := obj.(*networkingv1.NetworkPolicy); ok && np.Name == "allow-all-traffic" {
-						found = true
-						break
+				present := hasPolicies(t, stack)
+				for _, name := range []string{"postgres-network-policy", "redis-network-policy"} {
+					if present[name] {
+						t.Errorf("expected NetworkPolicy %q to be removed from stack", name)
 					}
 				}
-				if !found {
-					t.Error("expected NetworkPolicy named 'allow-all-traffic'")
+				if !present["api-network-policy"] {
+					t.Error("expected api-network-policy to remain in stack")
 				}
 			},
 		},
 		{
-			name:     "subIssue 2: postgres-service is NodePort",
+			name:     "subIssue 2: user-service policy removed",
 			subIssue: 2,
 			verify: func(t *testing.T, stack []client.Object) {
-				svc := findService(stack, "postgres-service")
-				if svc == nil {
-					t.Fatal("could not find postgres-service")
+				present := hasPolicies(t, stack)
+				if present["user-service-network-policy"] {
+					t.Error("expected user-service-network-policy to be removed from stack")
 				}
-				if svc.Spec.Type != corev1.ServiceTypeNodePort {
-					t.Errorf("expected postgres-service Type == NodePort, got %s", svc.Spec.Type)
-				}
-				// Check for NodePort 30432
-				foundNodePort := false
-				for _, port := range svc.Spec.Ports {
-					if port.NodePort == 30432 {
-						foundNodePort = true
-						break
-					}
-				}
-				if !foundNodePort {
-					t.Error("expected postgres-service to have NodePort 30432")
+				if !present["api-network-policy"] {
+					t.Error("expected api-network-policy to remain in stack")
 				}
 			},
 		},
 		{
-			name:     "subIssue 3: postgres-service is LoadBalancer",
+			name:     "subIssue 3: monitoring tier policies removed",
 			subIssue: 3,
 			verify: func(t *testing.T, stack []client.Object) {
-				svc := findService(stack, "postgres-service")
-				if svc == nil {
-					t.Fatal("could not find postgres-service")
+				present := hasPolicies(t, stack)
+				for _, name := range []string{"prometheus-network-policy", "grafana-network-policy"} {
+					if present[name] {
+						t.Errorf("expected NetworkPolicy %q to be removed from stack", name)
+					}
 				}
-				if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
-					t.Errorf("expected postgres-service Type == LoadBalancer, got %s", svc.Spec.Type)
+				if !present["api-network-policy"] {
+					t.Error("expected api-network-policy to remain in stack")
+				}
+			},
+		},
+		{
+			name:     "subIssue 4: webapp policy removed",
+			subIssue: 4,
+			verify: func(t *testing.T, stack []client.Object) {
+				present := hasPolicies(t, stack)
+				if present["webapp-network-policy"] {
+					t.Error("expected webapp-network-policy to be removed from stack")
+				}
+				if !present["api-network-policy"] {
+					t.Error("expected api-network-policy to remain in stack")
 				}
 			},
 		},

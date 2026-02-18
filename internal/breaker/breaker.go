@@ -20,12 +20,8 @@ import (
 
 // Constants for repeated strings (linter: goconst)
 const (
-	networkPolicyDisabled  = "disabled"
-	networkIsolationNone   = "none"
-	postgresServiceName    = "postgres-service"
-	externalDatabaseAccess = "external-database-access"
-	apiDeploymentName      = "api"
-	unrestrictedSAName     = "unrestricted-sa"
+	apiDeploymentName  = "api"
+	unrestrictedSAName = "unrestricted-sa"
 )
 
 // Constants for commonly used strings
@@ -53,6 +49,13 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 
 	// Get the baseline application stack
 	appStack := baseline.GetAppStack(namespace)
+
+	// Capture the baseline stack resource keys before mutation so we can detect removals
+	baselineKeys := make(map[string]client.Object, len(appStack))
+	for _, obj := range appStack {
+		key := fmt.Sprintf("%T/%s/%s", obj, obj.GetNamespace(), obj.GetName())
+		baselineKeys[key] = obj
+	}
 
 	// Apply the vulnerability to the target resource within the stack before deployment
 	var chosenSubIssue int
@@ -117,6 +120,31 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 				continue
 			}
 			return 0, fmt.Errorf("failed to create resource %s: %w", obj.GetName(), err)
+		}
+	}
+
+	// Delete any baseline resources that were intentionally removed by the vulnerability function.
+	// For example, K07:0 removes NetworkPolicies from the stack to demonstrate missing network
+	// controls — those resources must also be deleted from the cluster if they already exist.
+	modifiedKeys := make(map[string]struct{}, len(appStack))
+	for _, obj := range appStack {
+		key := fmt.Sprintf("%T/%s/%s", obj, obj.GetNamespace(), obj.GetName())
+		modifiedKeys[key] = struct{}{}
+	}
+	for key, obj := range baselineKeys {
+		if _, stillPresent := modifiedKeys[key]; !stillPresent {
+			existing := obj.DeepCopyObject().(client.Object)
+			if err := c.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
+				if !errors.IsNotFound(err) {
+					return 0, fmt.Errorf("failed to check removed resource %s: %w", obj.GetName(), err)
+				}
+				// Not found — nothing to delete
+				continue
+			}
+			if err := c.Delete(ctx, existing); err != nil && !errors.IsNotFound(err) {
+				return 0, fmt.Errorf("failed to delete removed resource %s: %w", obj.GetName(), err)
+			}
+			logger.Info("Deleted baseline resource removed by vulnerability", "resource", obj.GetName(), "type", fmt.Sprintf("%T", obj))
 		}
 	}
 
@@ -219,10 +247,11 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 				}
 				dep.Spec.Template.Annotations["container.security.capabilities"] = "network-management"
 
-			case 3: // Missing fsGroup in PodSecurityContext (flagged by Kubescape C-0211)
-				if dep.Spec.Template.Spec.SecurityContext != nil {
-					dep.Spec.Template.Spec.SecurityContext.FSGroup = nil
+			case 3: // Allow privilege escalation (flagged by Kubescape C-0016)
+				if container.SecurityContext == nil {
+					container.SecurityContext = &corev1.SecurityContext{}
 				}
+				container.SecurityContext.AllowPrivilegeEscalation = ptr.To(true)
 
 			case 4: // ReadOnlyRootFilesystem disabled (flagged by Kubescape C-0017)
 				// Disable read-only root filesystem
@@ -749,6 +778,8 @@ func applyK06ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 }
 
 // applyK07ToStack modifies the baseline stack to demonstrate missing network segmentation controls
+//
+//nolint:unparam // namespace kept for consistency with other applyKXX functions
 func applyK07ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
 	// K07 vulnerabilities are about MISSING network controls rather than broken ones
 	// We demonstrate this by either disabling network policies or exposing services externally
@@ -771,23 +802,17 @@ func applyK07ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 	case 0: // Unrestricted pod-to-pod communication (delete network policy)
 		addNetworkPolicyDisabledAnnotation(appStack)
 
-	case 1: // Network isolation disabled (create allow-all network policy)
-		addNetworkIsolationDisabledAnnotation(appStack, namespace)
+	case 1: // Data tier network policies removed (flagged by Kubescape C-0260)
+		removeNamedNetworkPolicies(appStack, "postgres-network-policy", "redis-network-policy")
 
-	case 2: // Database exposure (modify postgres service to NodePort)
-		if err := exposePostgresServiceAsNodePort(appStack); err != nil {
-			return vulnType, err
-		}
+	case 2: // Backend microservice network policy removed (flagged by Kubescape C-0260)
+		removeNamedNetworkPolicies(appStack, "user-service-network-policy")
 
-	case 3: // Service exposure annotation
-		if err := addServiceExposureAnnotation(appStack); err != nil {
-			return vulnType, err
-		}
+	case 3: // Monitoring tier network policies removed (flagged by Kubescape C-0260)
+		removeNamedNetworkPolicies(appStack, "prometheus-network-policy", "grafana-network-policy")
 
-	case 4: // Overly permissive egress (modify api-network-policy to allow-all egress)
-		if err := allowAllEgressInNetworkPolicy(appStack); err != nil {
-			return vulnType, err
-		}
+	case 4: // Frontend network policy removed (flagged by Kubescape C-0260)
+		removeNamedNetworkPolicies(appStack, "webapp-network-policy")
 	}
 
 	return vulnType, nil
@@ -805,82 +830,22 @@ func addNetworkPolicyDisabledAnnotation(appStack *[]client.Object) {
 	*appStack = updatedStack
 }
 
-// addNetworkIsolationDisabledAnnotation creates an allow-all NetworkPolicy
-func addNetworkIsolationDisabledAnnotation(appStack *[]client.Object, namespace string) {
-	// Create an allow-all NetworkPolicy
-	allowAllPolicy := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "allow-all-traffic",
-			Namespace: namespace,
-		},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{}, // Empty selector matches all pods
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeIngress,
-				networkingv1.PolicyTypeEgress,
-			},
-			Ingress: []networkingv1.NetworkPolicyIngressRule{
-				{}, // Empty rule allows all ingress
-			},
-			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{}, // Empty rule allows all egress
-			},
-		},
+// removeNamedNetworkPolicies removes specific NetworkPolicies from the stack by name
+func removeNamedNetworkPolicies(appStack *[]client.Object, names ...string) {
+	nameSet := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		nameSet[n] = struct{}{}
 	}
-
-	// Add the allow-all policy to the stack
-	*appStack = append(*appStack, allowAllPolicy)
-}
-
-// addServiceExposureAnnotation changes the postgres service type to LoadBalancer
-func addServiceExposureAnnotation(appStack *[]client.Object) error {
+	updatedStack := make([]client.Object, 0, len(*appStack))
 	for _, obj := range *appStack {
-		if svc, ok := obj.(*corev1.Service); ok && svc.Name == postgresServiceName {
-			// Change the service type from ClusterIP to LoadBalancer to expose it externally
-			svc.Spec.Type = corev1.ServiceTypeLoadBalancer
-			return nil
-		}
-	}
-	return fmt.Errorf("%s not found in baseline stack", postgresServiceName)
-}
-
-// exposePostgresServiceAsNodePort modifies the postgres service to be externally accessible
-func exposePostgresServiceAsNodePort(appStack *[]client.Object) error {
-	for _, obj := range *appStack {
-		if svc, ok := obj.(*corev1.Service); ok && svc.Name == postgresServiceName {
-			// Change the service type from ClusterIP to NodePort to expose it externally
-			svc.Spec.Type = corev1.ServiceTypeNodePort
-
-			// Add a specific NodePort for the postgres port
-			for i := range svc.Spec.Ports {
-				if svc.Spec.Ports[i].Name == "postgres" || svc.Spec.Ports[i].Port == 5432 {
-					svc.Spec.Ports[i].NodePort = 30432 // Expose postgres on node port 30432
-				}
+		if np, ok := obj.(*networkingv1.NetworkPolicy); ok {
+			if _, remove := nameSet[np.Name]; remove {
+				continue
 			}
-
-			return nil
 		}
+		updatedStack = append(updatedStack, obj)
 	}
-
-	return fmt.Errorf("%s not found in baseline stack", postgresServiceName)
-}
-
-// allowAllEgressInNetworkPolicy modifies api-network-policy to allow all egress traffic
-func allowAllEgressInNetworkPolicy(appStack *[]client.Object) error {
-	for _, obj := range *appStack {
-		if netpol, ok := obj.(*networkingv1.NetworkPolicy); ok && netpol.Name == "api-network-policy" {
-			// Replace egress rules with allow-all (empty To field means allow all)
-			// Keep ingress rules intact
-			netpol.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{
-				{
-					// Empty To field allows egress to all destinations
-					To: []networkingv1.NetworkPolicyPeer{},
-				},
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("api-network-policy not found in baseline stack")
+	*appStack = updatedStack
 }
 
 // applyK08ToStack modifies the baseline stack to apply secrets management vulnerabilities

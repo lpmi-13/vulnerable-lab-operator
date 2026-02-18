@@ -39,19 +39,21 @@ The first thing to do is run some scanners to see what you can pick up (or you c
 
 Find the vulnerabilities by running one of the following scans:
 
+- Note on kubescape versions: kubescape checks for newer releases on each run. If you see a warning like "current version '4.x' is not updated to the latest release: 'v3.x'", treat it as a version-check mismatch. This is just a warning, and the scan should still work. To silence the warning while staying on the latest version, set `KUBESCAPE_SKIP_UPDATE_CHECK=1` when you run kubescape.
+
 - scan the entire namespace with kubescape
 ```sh
-$ kubescape scan --include-namespaces test-lab
+$ KUBESCAPE_SKIP_UPDATE_CHECK=1 kubescape scan --include-namespaces test-lab
 ```
 
 - scan a specific deployment in the namespace with kubescape
 ```sh
-$ kubescape scan workload Deployment/<deployment-name> --include namespaces test-lab
+$ KUBESCAPE_SKIP_UPDATE_CHECK=1 kubescape scan workload Deployment/<deployment-name> --include namespaces test-lab
 ```
 
 - scan with kubescape using one of the built-in frameworks (nsa/mitre)
 ```sh
-$ kubescape scan framework mitre --include-namespaces test-lab
+$ KUBESCAPE_SKIP_UPDATE_CHECK=1 kubescape scan framework mitre --include-namespaces test-lab
 ```
 > some of the vulnerabilities don't show up in the stock kubescape scan, so if you don't see something in one of the above scans, try each of the frameworks.
 
@@ -71,7 +73,7 @@ Each vulnerability category has multiple sub-issues that are randomly selected:
   1. Privileged container - Sets privileged: true (Kubescape C-0057)
   2. Running as root - Sets runAsUser: 0 (Kubescape C-0013)
   3. Dangerous capabilities - Adds SYS_ADMIN, NET_ADMIN capabilities (Kubescape C-0046)
-  4. Missing fsGroup - Removes fsGroup from PodSecurityContext (Kubescape C-0211)
+  4. Allow privilege escalation - Sets allowPrivilegeEscalation: true (Kubescape C-0016)
   5. ReadOnlyRootFilesystem disabled - Sets readOnlyRootFilesystem: false (Kubescape C-0017)
   6. Missing resource limits - Removes CPU/memory resource limits (Kubescape C-0009, C-0004)
   7. Host PID/IPC access - Sets hostPID: true and hostIPC: true (Kubescape C-0038)
@@ -97,11 +99,11 @@ Each vulnerability category has multiple sub-issues that are randomly selected:
 
 - K07 (Missing Network Segmentation) - 5 sub-issues:
 
-  1. Unrestricted pod-to-pod communication - Deletes network policy entirely (Kubescape C-0260)
-  2. Network isolation disabled - Creates allow-all-traffic NetworkPolicy (Kubescape C-0030)
-  3. Database exposure via NodePort - Changes PostgreSQL service to NodePort:30432
-  4. Database exposure via LoadBalancer - Changes PostgreSQL service to LoadBalancer
-  5. Overly permissive egress - Replaces egress rules in api-network-policy with allow-all (Kubescape C-0030)
+  1. Unrestricted pod-to-pod communication - Deletes all network policies (Kubescape C-0260)
+  2. Data tier exposed - Removes postgres and redis network policies (Kubescape C-0260)
+  3. Backend microservice exposed - Removes user-service network policy (Kubescape C-0260)
+  4. Monitoring tier exposed - Removes prometheus and grafana network policies (Kubescape C-0260)
+  5. Frontend exposed - Removes webapp network policy (Kubescape C-0260)
 
 - K08 (Secrets Management Failures) - 4 sub-issues:
 
@@ -349,4 +351,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-

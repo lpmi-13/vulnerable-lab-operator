@@ -27,7 +27,7 @@ type VulnerableLabSpec struct {
 	Vulnerability string `json:"vulnerability,omitempty"`
 	// +optional
 	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=5
+	// +kubebuilder:validation:Maximum=8
 	SubIssue *int `json:"subIssue,omitempty"`
 }
 

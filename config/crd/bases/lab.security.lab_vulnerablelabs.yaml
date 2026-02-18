@@ -40,7 +40,7 @@ spec:
             description: VulnerableLabSpec defines the desired state of VulnerableLab.
             properties:
               subIssue:
-                maximum: 5
+                maximum: 8
                 minimum: 0
                 type: integer
               vulnerability:
