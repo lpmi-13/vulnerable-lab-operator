@@ -142,19 +142,6 @@ func GetAppStack(namespace string) []client.Object {
 			Type: corev1.SecretTypeOpaque,
 		},
 
-		// TLS Certificates Secret
-		&corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "tls-certificates",
-				Namespace: namespace,
-			},
-			StringData: map[string]string{
-				"tls.crt": "-----BEGIN CERTIFICATE-----\nMIICDzCCAXgCAQAwDQYJKoZIhvcNAQEFBQAwFTETMBEGA1UEAwwKbXlkb21haW4u\n...\n-----END CERTIFICATE-----",
-				"tls.key": "-----BEGIN PRIVATE KEY-----\nMIICdwIBADANBgkqhkiG9w0BAQEFAASCAmEwggJdAgEAAoGBAK9Z...\n-----END PRIVATE KEY-----",
-			},
-			Type: corev1.SecretTypeTLS,
-		},
-
 		// All ConfigMaps - must come before deployments that reference them
 		// Prometheus ConfigMap
 		&corev1.ConfigMap{
@@ -280,7 +267,7 @@ http {
 									},
 									{
 										Name:  "POSTGRES_INITDB_ARGS",
-										Value: "--auth-host=trust",
+										Value: "--encoding=UTF8",
 									},
 									{
 										Name:  "POSTGRES_DB",

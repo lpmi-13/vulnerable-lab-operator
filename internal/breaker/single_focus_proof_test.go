@@ -26,7 +26,7 @@ func TestSingleFocusProof(t *testing.T) {
 				t.Fatalf("K01 iteration %d failed: %v", i, err)
 			}
 		}
-		t.Log("✓ K01 applies exactly ONE random security context vulnerability (privileged, root user, or dangerous capabilities)")
+		t.Log("✓ K01 applies exactly ONE random security context vulnerability (privileged, root user, hostPID/IPC, hostNetwork, or hostPath)")
 	})
 
 	// Test K03 - Overly Permissive RBAC
@@ -38,19 +38,7 @@ func TestSingleFocusProof(t *testing.T) {
 				t.Fatalf("K03 iteration %d failed: %v", i, err)
 			}
 		}
-		t.Log("✓ K03 applies exactly ONE random RBAC vulnerability (cluster-admin, secret access, cross-namespace, or node access)")
-	})
-
-	// Test K06 - Broken Authentication
-	t.Run("K06_Single_Auth_Vulnerability", func(t *testing.T) {
-		for i := 0; i < 10; i++ {
-			appStack := baseline.GetAppStack(namespace)
-			_, err := applyK06ToStack(&appStack, target, namespace, nil, rng)
-			if err != nil {
-				t.Fatalf("K06 iteration %d failed: %v", i, err)
-			}
-		}
-		t.Log("✓ K06 applies exactly ONE random authentication vulnerability (default SA, automount token, or permissive SA with automount)")
+		t.Log("✓ K03 applies exactly ONE random RBAC vulnerability (secrets access, pod creation, delete, admin escalation, wildcard, portforward, or exec)")
 	})
 
 	// Test K07 - Network Segmentation
@@ -62,7 +50,7 @@ func TestSingleFocusProof(t *testing.T) {
 				t.Fatalf("K07 iteration %d failed: %v", i, err)
 			}
 		}
-		t.Log("✓ K07 applies exactly ONE random network vulnerability (network policy disabled, isolation disabled, postgres NodePort, or service exposure annotation)")
+		t.Log("✓ K07 applies exactly ONE network vulnerability (user-service network policy removed)")
 	})
 
 	// Test K08 - Secrets Management
@@ -74,11 +62,11 @@ func TestSingleFocusProof(t *testing.T) {
 				t.Fatalf("K08 iteration %d failed: %v", i, err)
 			}
 		}
-		t.Log("✓ K08 applies exactly ONE random secrets vulnerability (secrets in ConfigMaps, hardcoded annotation, or volume annotation)")
+		t.Log("✓ K08 applies exactly ONE secrets vulnerability (secrets in ConfigMaps)")
 	})
 
 	t.Log("\n=== PROOF COMPLETE ===")
-	t.Log("✅ Each vulnerability category (K01, K03, K06, K07, K08) applies exactly ONE focused misconfiguration")
+	t.Log("✅ Each vulnerability category (K01, K03, K07, K08) applies exactly ONE focused misconfiguration")
 	t.Log("✅ This enables single-fix testing where learners need to identify and remediate exactly one issue")
 	t.Log("✅ Random selection within each category provides varied learning experiences")
 }
@@ -106,11 +94,6 @@ func TestRandomizationWorks(t *testing.T) {
 		{"K03", func() error {
 			appStack := baseline.GetAppStack(namespace)
 			_, err := applyK03ToStack(&appStack, target, namespace, nil, rng)
-			return err
-		}},
-		{"K06", func() error {
-			appStack := baseline.GetAppStack(namespace)
-			_, err := applyK06ToStack(&appStack, target, namespace, nil, rng)
 			return err
 		}},
 		{"K07", func() error {

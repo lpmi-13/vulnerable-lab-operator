@@ -40,14 +40,13 @@ spec:
             description: VulnerableLabSpec defines the desired state of VulnerableLab.
             properties:
               subIssue:
-                maximum: 8
+                maximum: 6
                 minimum: 0
                 type: integer
               vulnerability:
                 enum:
                 - K01
                 - K03
-                - K06
                 - K07
                 - K08
                 - random

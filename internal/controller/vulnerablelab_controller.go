@@ -167,7 +167,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	} else {
 		// Complete randomization (behavior 1 above)
 		// Randomly choose both vulnerability category and sub-issue
-		vulnerabilities := []string{"K01", "K03", "K06", "K07", "K08"}
+		vulnerabilities := []string{"K01", "K03", "K07", "K08"}
 		vulnIndex := r.selectRandomIndex(len(vulnerabilities))
 		chosenVuln = vulnerabilities[vulnIndex]
 		if lab.Spec.SubIssue != nil {
@@ -187,8 +187,6 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 		viableTargets = []string{"api", "webapp", "redis-cache", "prometheus", "grafana", "postgres-db", "user-service", "payment-service"}
 	case "K03":
 		viableTargets = []string{"api", "user-service", "payment-service"} // Services that need RBAC permissions
-	case "K06":
-		viableTargets = []string{"api", "user-service", "payment-service"} // Services that use secrets
 	case "K07":
 		viableTargets = []string{"api", "webapp", "user-service", "payment-service"} // Services affected by network policies
 	case "K08":
@@ -319,11 +317,6 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 		r.cleanupOrphanedK03Resources(ctx, namespace)
 	}
 
-	// For K06 vulnerabilities, check for partial deletions and clean up
-	if lab.Status.ChosenVulnerability == "K06" {
-		r.cleanupOrphanedK06Resources(ctx, namespace)
-	}
-
 	isFixed, err := breaker.CheckRemediation(ctx, r.Client, lab.Status.ChosenVulnerability, lab.Status.TargetResource, namespace, lab.Status.ChosenSubIssue)
 	if err != nil {
 		logger.Error(err, "Failed to check remediation status")
@@ -410,6 +403,26 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 
 		// All resources are gone, proceed with reset
 		logger.Info("All resources deleted, proceeding with reset", "namespace", namespace)
+
+		// Delete all lab-managed RBAC resources (K03 creates these outside the baseline stack)
+		roleList := &rbacv1.RoleList{}
+		if err := r.List(ctx, roleList, client.InNamespace(namespace),
+			client.MatchingLabels{"rbac.k8s.lab/managed-by": "vulnerable-lab"}); err == nil {
+			for i := range roleList.Items {
+				if err := r.Delete(ctx, &roleList.Items[i]); err != nil && !errors.IsNotFound(err) {
+					logger.Error(err, "Failed to delete lab-managed Role", "role", roleList.Items[i].Name)
+				}
+			}
+		}
+		rbList := &rbacv1.RoleBindingList{}
+		if err := r.List(ctx, rbList, client.InNamespace(namespace),
+			client.MatchingLabels{"rbac.k8s.lab/managed-by": "vulnerable-lab"}); err == nil {
+			for i := range rbList.Items {
+				if err := r.Delete(ctx, &rbList.Items[i]); err != nil && !errors.IsNotFound(err) {
+					logger.Error(err, "Failed to delete lab-managed RoleBinding", "rb", rbList.Items[i].Name)
+				}
+			}
+		}
 	}
 
 	// Clean up any cluster-scoped RBAC resources from K03 vulnerabilities
@@ -454,97 +467,70 @@ func (r *VulnerableLabReconciler) selectRandomIndex(arrayLength int) int {
 }
 
 // cleanupOrphanedK03Resources removes orphaned RBAC resources when partial deletions occur
+// Uses label selector to find all lab-managed resources rather than enumerating by name
 func (r *VulnerableLabReconciler) cleanupOrphanedK03Resources(ctx context.Context, namespace string) {
 	logger := log.FromContext(ctx)
 
-	// Define all possible K03 RBAC resource pairs (names match breaker.go naming convention)
-	rbacPairs := []struct {
-		roleName        string
-		roleBindingName string
-	}{
-		{namespace + "-overpermissive", namespace + "-overpermissive-binding"},
-		{namespace + "-default-permissions", namespace + "-default-binding"},
-		{namespace + "-secrets-reader", namespace + "-secrets-binding"},
+	// Find all lab-managed RoleBindings; if any RoleBinding was deleted, clean up its orphaned Role
+	roleList := &rbacv1.RoleList{}
+	if err := r.List(ctx, roleList, client.InNamespace(namespace),
+		client.MatchingLabels{"rbac.k8s.lab/managed-by": "vulnerable-lab"}); err != nil {
+		return
 	}
 
-	for _, pair := range rbacPairs {
-		// Check if RoleBinding exists
-		roleBinding := &rbacv1.RoleBinding{}
-		bindingExists := true
-		if err := r.Get(ctx, client.ObjectKey{Name: pair.roleBindingName, Namespace: namespace}, roleBinding); err != nil {
-			if errors.IsNotFound(err) {
-				bindingExists = false
-			}
-		}
+	rbList := &rbacv1.RoleBindingList{}
+	if err := r.List(ctx, rbList, client.InNamespace(namespace),
+		client.MatchingLabels{"rbac.k8s.lab/managed-by": "vulnerable-lab"}); err != nil {
+		return
+	}
 
-		// Check if Role exists
-		role := &rbacv1.Role{}
-		roleExists := true
-		if err := r.Get(ctx, client.ObjectKey{Name: pair.roleName, Namespace: namespace}, role); err != nil {
-			if errors.IsNotFound(err) {
-				roleExists = false
-			}
-		}
+	// Build set of names referenced by bindings
+	boundRoles := make(map[string]struct{})
+	for _, rb := range rbList.Items {
+		boundRoles[rb.RoleRef.Name] = struct{}{}
+	}
 
-		// If RoleBinding was deleted but Role still exists, clean up the Role
-		if !bindingExists && roleExists {
-			logger.Info("Cleaning up orphaned Role", "role", pair.roleName)
+	// Delete any Role that no longer has a binding
+	for i := range roleList.Items {
+		role := &roleList.Items[i]
+		if _, isBound := boundRoles[role.Name]; !isBound {
+			logger.Info("Cleaning up orphaned Role", "role", role.Name)
 			if err := r.Delete(ctx, role); err != nil && !errors.IsNotFound(err) {
-				logger.Error(err, "Failed to delete orphaned Role", "role", pair.roleName)
-			}
-		}
-
-	}
-}
-
-// cleanupOrphanedK06Resources removes orphaned ServiceAccount resources when deleted
-func (r *VulnerableLabReconciler) cleanupOrphanedK06Resources(ctx context.Context, namespace string) {
-	logger := log.FromContext(ctx)
-
-	// K06:2 creates an unrestricted-sa ServiceAccount
-	sa := &corev1.ServiceAccount{}
-	err := r.Get(ctx, client.ObjectKey{Name: "unrestricted-sa", Namespace: namespace}, sa)
-	if err == nil {
-		// Check if it's still referenced by any deployment
-		depList := &appsv1.DeploymentList{}
-		if err := r.List(ctx, depList, client.InNamespace(namespace)); err == nil {
-			saInUse := false
-			for _, dep := range depList.Items {
-				if dep.Spec.Template.Spec.ServiceAccountName == "unrestricted-sa" {
-					saInUse = true
-					break
-				}
-			}
-
-			// If not in use, delete it
-			if !saInUse {
-				logger.Info("Cleaning up orphaned ServiceAccount", "serviceAccount", "unrestricted-sa")
-				if err := r.Delete(ctx, sa); err != nil && !errors.IsNotFound(err) {
-					logger.Error(err, "Failed to delete orphaned ServiceAccount", "serviceAccount", "unrestricted-sa")
-				}
+				logger.Error(err, "Failed to delete orphaned Role", "role", role.Name)
 			}
 		}
 	}
 }
 
 // cleanupClusterRBAC removes any cluster-scoped RBAC resources
-// K03:3 creates ClusterRoleBindings that need to be cleaned up
+// K03:3 creates ClusterRoles and ClusterRoleBindings that need to be cleaned up
+//
+//nolint:unparam // namespace kept for API consistency with other cleanup functions
 func (r *VulnerableLabReconciler) cleanupClusterRBAC(ctx context.Context, namespace string) {
 	logger := log.FromContext(ctx)
 
-	// Delete ClusterRoleBinding for K03:3 if it exists
-	clusterBindingName := fmt.Sprintf("%s-cluster-admin-binding", namespace)
-	clusterBinding := &rbacv1.ClusterRoleBinding{}
-	err := r.Get(ctx, client.ObjectKey{Name: clusterBindingName}, clusterBinding)
-	if err == nil {
-		// ClusterRoleBinding exists, delete it
-		if err := r.Delete(ctx, clusterBinding); err != nil {
-			logger.Error(err, "Failed to delete ClusterRoleBinding", "name", clusterBindingName)
-		} else {
-			logger.Info("Deleted ClusterRoleBinding", "name", clusterBindingName)
+	crbList := &rbacv1.ClusterRoleBindingList{}
+	if err := r.List(ctx, crbList,
+		client.MatchingLabels{"rbac.k8s.lab/managed-by": "vulnerable-lab"}); err == nil {
+		for i := range crbList.Items {
+			if err := r.Delete(ctx, &crbList.Items[i]); err != nil && !errors.IsNotFound(err) {
+				logger.Error(err, "Failed to delete ClusterRoleBinding", "name", crbList.Items[i].Name)
+			} else {
+				logger.Info("Deleted ClusterRoleBinding", "name", crbList.Items[i].Name)
+			}
 		}
-	} else if !errors.IsNotFound(err) {
-		logger.Error(err, "Failed to get ClusterRoleBinding", "name", clusterBindingName)
+	}
+
+	crList := &rbacv1.ClusterRoleList{}
+	if err := r.List(ctx, crList,
+		client.MatchingLabels{"rbac.k8s.lab/managed-by": "vulnerable-lab"}); err == nil {
+		for i := range crList.Items {
+			if err := r.Delete(ctx, &crList.Items[i]); err != nil && !errors.IsNotFound(err) {
+				logger.Error(err, "Failed to delete ClusterRole", "name", crList.Items[i].Name)
+			} else {
+				logger.Info("Deleted ClusterRole", "name", crList.Items[i].Name)
+			}
+		}
 	}
 }
 
