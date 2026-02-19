@@ -408,52 +408,8 @@ func TestK03SubIssueSelection(t *testing.T) {
 			},
 		},
 		{
-			name:     "subIssue 3: admin role escalation (C-0035)",
+			name:     "subIssue 3: portforward privileges (C-0063)",
 			subIssue: 3,
-			verify: func(t *testing.T, stack []client.Object, ns string) {
-				foundRole := false
-				foundBinding := false
-				for _, obj := range stack {
-					if cr, ok := obj.(*rbacv1.ClusterRole); ok && cr.Name == fmt.Sprintf("%s-admin-escalation-role", ns) {
-						foundRole = true
-					}
-					if crb, ok := obj.(*rbacv1.ClusterRoleBinding); ok && crb.Name == fmt.Sprintf("%s-admin-escalation-binding", ns) {
-						foundBinding = true
-					}
-				}
-				if !foundRole {
-					t.Error("expected ClusterRole with name '<ns>-admin-escalation-role'")
-				}
-				if !foundBinding {
-					t.Error("expected ClusterRoleBinding with name '<ns>-admin-escalation-binding'")
-				}
-			},
-		},
-		{
-			name:     "subIssue 4: wildcard permissions (C-0187)",
-			subIssue: 4,
-			verify: func(t *testing.T, stack []client.Object, ns string) {
-				foundRole := false
-				foundBinding := false
-				for _, obj := range stack {
-					if role, ok := obj.(*rbacv1.Role); ok && role.Name == fmt.Sprintf("%s-wildcard-role", ns) {
-						foundRole = true
-					}
-					if binding, ok := obj.(*rbacv1.RoleBinding); ok && binding.Name == fmt.Sprintf("%s-wildcard-binding", ns) {
-						foundBinding = true
-					}
-				}
-				if !foundRole {
-					t.Error("expected Role with name '<ns>-wildcard-role'")
-				}
-				if !foundBinding {
-					t.Error("expected RoleBinding with name '<ns>-wildcard-binding'")
-				}
-			},
-		},
-		{
-			name:     "subIssue 5: portforward privileges (C-0063)",
-			subIssue: 5,
 			verify: func(t *testing.T, stack []client.Object, ns string) {
 				foundRole := false
 				foundBinding := false
@@ -474,8 +430,8 @@ func TestK03SubIssueSelection(t *testing.T) {
 			},
 		},
 		{
-			name:     "subIssue 6: command execution (C-0002)",
-			subIssue: 6,
+			name:     "subIssue 4: command execution (C-0002)",
+			subIssue: 4,
 			verify: func(t *testing.T, stack []client.Object, ns string) {
 				foundRole := false
 				foundBinding := false

@@ -66,15 +66,13 @@ Each implemented vulnerability category has sub-issues that are randomly selecte
   4. HostNetwork access - Sets hostNetwork: true (Kubescape C-0041)
   5. HostPath volume mount - Mounts host /var/log via hostPath volume (Kubescape C-0048)
 
-- K03 (Overly Permissive RBAC) - 7 sub-issues:
+- K03 (Overly Permissive RBAC) - 5 sub-issues:
 
-  1. Secrets access role/binding - Grants list/get/watch on secrets in namespace
-  2. Pod creation role/binding - Grants create/list/watch on pods
-  3. Delete capabilities role/binding - Grants delete on core resources
-  4. Admin escalation ClusterRole/Binding - Grants bind/escalate on roles
-  5. Wildcard role/binding - Grants wildcard access
-  6. Portforward role/binding - Grants pods/portforward
-  7. Exec role/binding - Grants pods/exec
+  1. Secrets access role/binding - Grants list/get/watch on secrets in namespace (Kubescape C-0015)
+  2. Pod creation role/binding - Grants create/list/watch on pods (Kubescape C-0188)
+  3. Delete capabilities role/binding - Grants delete on core resources (Kubescape C-0007)
+  4. Portforward role/binding - Grants pods/portforward (Kubescape C-0063)
+  5. Exec role/binding - Grants pods/exec (Kubescape C-0002)
 
 - K07 (Missing Network Segmentation) - 1 sub-issue:
 

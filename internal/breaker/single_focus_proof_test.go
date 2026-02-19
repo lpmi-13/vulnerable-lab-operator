@@ -38,7 +38,7 @@ func TestSingleFocusProof(t *testing.T) {
 				t.Fatalf("K03 iteration %d failed: %v", i, err)
 			}
 		}
-		t.Log("✓ K03 applies exactly ONE random RBAC vulnerability (secrets access, pod creation, delete, admin escalation, wildcard, portforward, or exec)")
+		t.Log("✓ K03 applies exactly ONE random RBAC vulnerability (secrets access, pod creation, delete, portforward, or exec)")
 	})
 
 	// Test K07 - Network Segmentation

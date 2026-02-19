@@ -283,9 +283,9 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 }
 
 // applyK03ToStack modifies the baseline stack to apply overly permissive RBAC configurations
-// Sub-issues: 0=C-0015(secrets list), 1=C-0188(pod create), 2=C-0007(delete), 3=C-0035(admin escalation),
+// Sub-issues: 0=C-0015(secrets list), 1=C-0188(pod create), 2=C-0007(delete),
 //
-//	4=C-0187(wildcard), 5=C-0063(portforward), 6=C-0002(exec)
+//	3=C-0063(portforward), 4=C-0002(exec)
 func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
 	// Find and modify the target deployment within the stack
 	for _, obj := range *appStack {
@@ -293,13 +293,13 @@ func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 			// Choose vulnerability type based on subIssue parameter or randomly
 			var vulnType int
 			if subIssue != nil {
-				if *subIssue < 0 || *subIssue > 6 {
-					return 0, fmt.Errorf("subIssue %d out of range for K03 (valid: 0-6)", *subIssue)
+				if *subIssue < 0 || *subIssue > 4 {
+					return 0, fmt.Errorf("subIssue %d out of range for K03 (valid: 0-4)", *subIssue)
 				}
 				vulnType = *subIssue
 			} else {
-				// Randomly choose one of seven K03 vulnerability types
-				vulnType = rng.Intn(7)
+				// Randomly choose one of five K03 vulnerability types
+				vulnType = rng.Intn(5)
 			}
 
 			switch vulnType {
@@ -309,13 +309,9 @@ func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 				createPodCreationRBAC(appStack, namespace)
 			case 2: // Delete capabilities (C-0007)
 				createDeleteCapabilitiesRBAC(appStack, namespace)
-			case 3: // Administrative Roles (C-0035)
-				createAdminRoleEscalation(appStack, namespace)
-			case 4: // Wildcard use in Roles (C-0187)
-				createWildcardRBAC(appStack, namespace)
-			case 5: // Portforwarding privileges (C-0063)
+			case 3: // Portforwarding privileges (C-0063)
 				createPortforwardRBAC(appStack, namespace)
-			case 6: // Command execution (C-0002)
+			case 4: // Command execution (C-0002)
 				createExecRBAC(appStack, namespace)
 			}
 
@@ -353,53 +349,6 @@ func createSecretsAccessRBAC(appStack *[]client.Object, namespace string) {
 	binding := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-secrets-access-binding", namespace),
-			Namespace: namespace,
-			Labels: map[string]string{
-				"rbac.k8s.lab/managed-by": "vulnerable-lab",
-			},
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      "restricted-sa",
-				Namespace: namespace,
-			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			Kind:     "Role",
-			Name:     role.Name,
-			APIGroup: "rbac.authorization.k8s.io",
-		},
-	}
-
-	*appStack = append(*appStack, role, binding)
-}
-
-// createWildcardRBAC grants wildcard permissions within the namespace (C-0187)
-func createWildcardRBAC(appStack *[]client.Object, namespace string) {
-	role := &rbacv1.Role{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-wildcard-role", namespace),
-			Namespace: namespace,
-			Labels: map[string]string{
-				"rbac.k8s.lab/managed-by": "vulnerable-lab",
-			},
-			Annotations: map[string]string{
-				"rbac.authorization.k8s.io/reason": "broad-access-required",
-			},
-		},
-		Rules: []rbacv1.PolicyRule{
-			{
-				APIGroups: []string{"*"},
-				Resources: []string{"*"},
-				Verbs:     []string{"get"},
-			},
-		},
-	}
-
-	binding := &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-wildcard-binding", namespace),
 			Namespace: namespace,
 			Labels: map[string]string{
 				"rbac.k8s.lab/managed-by": "vulnerable-lab",
@@ -608,56 +557,6 @@ func createPodCreationRBAC(appStack *[]client.Object, namespace string) {
 	}
 
 	*appStack = append(*appStack, role, binding)
-}
-
-// createAdminRoleEscalation creates a ClusterRole with privilege escalation ability (C-0035)
-func createAdminRoleEscalation(appStack *[]client.Object, namespace string) {
-	clusterRole := &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("%s-admin-escalation-role", namespace),
-			Labels: map[string]string{
-				"rbac.k8s.lab/managed-by": "vulnerable-lab",
-				"rbac.k8s.lab/namespace":  namespace,
-			},
-			Annotations: map[string]string{
-				"rbac.authorization.k8s.io/reason": "infrastructure-management",
-			},
-		},
-		Rules: []rbacv1.PolicyRule{
-			{
-				APIGroups: []string{"rbac.authorization.k8s.io"},
-				Resources: []string{"clusterroles", "roles"},
-				Verbs:     []string{"bind", "escalate"},
-			},
-		},
-	}
-
-	binding := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("%s-admin-escalation-binding", namespace),
-			Labels: map[string]string{
-				"rbac.k8s.lab/managed-by": "vulnerable-lab",
-				"rbac.k8s.lab/namespace":  namespace,
-			},
-			Annotations: map[string]string{
-				"rbac.authorization.k8s.io/reason": "infrastructure-management",
-			},
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      "restricted-sa",
-				Namespace: namespace,
-			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			Kind:     "ClusterRole",
-			Name:     clusterRole.Name,
-			APIGroup: "rbac.authorization.k8s.io",
-		},
-	}
-
-	*appStack = append(*appStack, clusterRole, binding)
 }
 
 // applyK07ToStack modifies the baseline stack to demonstrate missing network segmentation controls

@@ -10,12 +10,29 @@ mkdir -p "$OUTPUT_DIR"
 # Associative arrays for tracking results
 # SCRIPT_CONTROLS stores entries as newline-delimited "C-XXXX|Control Name|count" lines
 # (space-delimited caused parsing bugs when control names contain spaces)
-declare -A SCRIPT_CONTROLS   # script -> newline-delimited "CID|Name|count" entries
-declare -A SCRIPT_STATUS     # script -> OK|DUPLICATE|MULTI|NO_TRIGGER|HIGH_COUNT
+declare -A SCRIPT_CONTROLS    # script -> newline-delimited "CID|Name|count" entries
+declare -A SCRIPT_STATUS      # script -> PASS|FAIL
+declare -A SCRIPT_FAIL_REASON # script -> human-readable failure reason
 declare -A CONTROL_FIRST_SEEN # control_id -> first script that triggered it
+
+# Expected control per script — the 1:1 kubescape control mapping goal
+declare -A EXPECTED_CONTROL
+EXPECTED_CONTROL["k01-sub0.sh"]="C-0057"  # Privileged container
+EXPECTED_CONTROL["k01-sub1.sh"]="C-0013"  # Non-root containers (RunAsNonRoot)
+EXPECTED_CONTROL["k01-sub2.sh"]="C-0038"  # Host PID / IPC privileges
+EXPECTED_CONTROL["k01-sub3.sh"]="C-0041"  # HostNetwork access
+EXPECTED_CONTROL["k01-sub4.sh"]="C-0048"  # HostPath mount
+EXPECTED_CONTROL["k03-sub0.sh"]="C-0015"  # List Kubernetes secrets
+EXPECTED_CONTROL["k03-sub1.sh"]="C-0188"  # Create pods
+EXPECTED_CONTROL["k03-sub2.sh"]="C-0007"  # Delete Kubernetes resources
+EXPECTED_CONTROL["k03-sub3.sh"]="C-0063"  # Portforwarding privileges
+EXPECTED_CONTROL["k03-sub4.sh"]="C-0002"  # Exec into container
+EXPECTED_CONTROL["k07-sub0.sh"]="C-0260"  # Missing network policy
+EXPECTED_CONTROL["k08-sub0.sh"]="C-0012"  # Applications credentials in configuration files
 
 echo "=== KUBESCAPE CONTROL DISCOVERY ===" | tee "$RESULTS_FILE"
 echo "Started: $(date)" | tee -a "$RESULTS_FILE"
+echo "Objective: each script triggers exactly 1 unique kubescape control with count=1" | tee -a "$RESULTS_FILE"
 echo "" | tee -a "$RESULTS_FILE"
 
 # Collect all k*-sub*.sh scripts, sorted
@@ -25,13 +42,30 @@ while IFS= read -r -d '' f; do
 done < <(find "$SCRIPT_DIR" -maxdepth 1 -name 'k*-sub*.sh' -print0 | sort -z)
 
 echo "Found ${#SCRIPTS[@]} sub-issue scripts: ${SCRIPTS[*]}" | tee -a "$RESULTS_FILE"
+
+# Validate that we have all expected scripts and no unexpected ones
+EXPECTED_SCRIPTS=("${!EXPECTED_CONTROL[@]}")
+IFS=$'\n' EXPECTED_SCRIPTS_SORTED=($(sort <<< "${EXPECTED_SCRIPTS[*]}")); unset IFS
+echo "Expected ${#EXPECTED_CONTROL[@]} scripts based on target mapping" | tee -a "$RESULTS_FILE"
+
+for EXPECTED in "${EXPECTED_SCRIPTS_SORTED[@]}"; do
+  if [[ ! -f "$SCRIPT_DIR/$EXPECTED" ]]; then
+    echo "  WARNING: Expected script $EXPECTED not found" | tee -a "$RESULTS_FILE"
+  fi
+done
+for SCRIPT_NAME in "${SCRIPTS[@]}"; do
+  if [[ -z "${EXPECTED_CONTROL[$SCRIPT_NAME]:-}" ]]; then
+    echo "  WARNING: Script $SCRIPT_NAME has no expected control mapping" | tee -a "$RESULTS_FILE"
+  fi
+done
 echo "" | tee -a "$RESULTS_FILE"
 
 for SCRIPT_NAME in "${SCRIPTS[@]}"; do
   SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_NAME"
   SCAN_OUTPUT_FILE="$OUTPUT_DIR/${SCRIPT_NAME%.sh}-scan.txt"
+  EXPECTED="${EXPECTED_CONTROL[$SCRIPT_NAME]:-UNKNOWN}"
 
-  echo "--- Processing $SCRIPT_NAME ---" | tee -a "$RESULTS_FILE"
+  echo "--- Processing $SCRIPT_NAME (expected: $EXPECTED) ---" | tee -a "$RESULTS_FILE"
 
   # Full cluster reset: delete VulnerableLab and all RBAC resources created by K03
   # (K03 Role/RoleBinding/ClusterRoleBinding resources persist after VulnerableLab deletion
@@ -51,7 +85,8 @@ for SCRIPT_NAME in "${SCRIPTS[@]}"; do
   if ! bash "$SCRIPT_PATH" 2>&1 | tee -a "$RESULTS_FILE"; then
     echo "  ERROR: $SCRIPT_NAME failed to apply" | tee -a "$RESULTS_FILE"
     SCRIPT_CONTROLS["$SCRIPT_NAME"]=""
-    SCRIPT_STATUS["$SCRIPT_NAME"]="ERROR"
+    SCRIPT_STATUS["$SCRIPT_NAME"]="FAIL"
+    SCRIPT_FAIL_REASON["$SCRIPT_NAME"]="script execution failed"
     continue
   fi
 
@@ -86,18 +121,20 @@ for SCRIPT_NAME in "${SCRIPTS[@]}"; do
 done
 
 echo "" | tee -a "$RESULTS_FILE"
-echo "=== DISCOVERY RESULTS ===" | tee -a "$RESULTS_FILE"
+echo "=== PER-SCRIPT RESULTS ===" | tee -a "$RESULTS_FILE"
 echo "" | tee -a "$RESULTS_FILE"
 
-# Determine statuses and first-seen controls
+# Determine pass/fail for each script
 for SCRIPT_NAME in "${SCRIPTS[@]}"; do
   CONTROLS="${SCRIPT_CONTROLS[$SCRIPT_NAME]:-}"
+  EXPECTED="${EXPECTED_CONTROL[$SCRIPT_NAME]:-UNKNOWN}"
 
-  if [[ "${SCRIPT_STATUS[$SCRIPT_NAME]:-}" == "ERROR" ]]; then
+  # Skip scripts that already have a status set (e.g. ERROR during execution)
+  if [[ -n "${SCRIPT_STATUS[$SCRIPT_NAME]:-}" ]]; then
     continue
   fi
 
-  # Count distinct controls (entries are newline-delimited)
+  # Count distinct controls
   CONTROL_COUNT=0
   if [[ -n "$CONTROLS" ]]; then
     while IFS= read -r entry; do
@@ -106,97 +143,106 @@ for SCRIPT_NAME in "${SCRIPTS[@]}"; do
     done <<< "$CONTROLS"
   fi
 
-  # Determine status
   if [[ $CONTROL_COUNT -eq 0 ]]; then
-    SCRIPT_STATUS["$SCRIPT_NAME"]="NO_TRIGGER"
+    SCRIPT_STATUS["$SCRIPT_NAME"]="FAIL"
+    SCRIPT_FAIL_REASON["$SCRIPT_NAME"]="NO_TRIGGER: no controls detected"
   elif [[ $CONTROL_COUNT -gt 1 ]]; then
-    SCRIPT_STATUS["$SCRIPT_NAME"]="MULTI"
+    SCRIPT_STATUS["$SCRIPT_NAME"]="FAIL"
+    CONTROLS_LIST=""
+    while IFS= read -r entry; do
+      [[ -z "$entry" ]] && continue
+      IFS='|' read -r CID _ _ <<< "$entry"
+      CONTROLS_LIST="${CONTROLS_LIST:+$CONTROLS_LIST, }$CID"
+    done <<< "$CONTROLS"
+    SCRIPT_FAIL_REASON["$SCRIPT_NAME"]="MULTI: triggers $CONTROL_COUNT controls ($CONTROLS_LIST)"
   else
-    # Single control - check count and duplication
+    # Exactly one control — validate it
     entry=$(head -1 <<< "$CONTROLS")
-    IFS='|' read -r CID CNAME CCOUNT <<< "$entry"
-    if [[ "$CCOUNT" -gt 1 ]]; then
-      SCRIPT_STATUS["$SCRIPT_NAME"]="HIGH_COUNT"
-    elif [[ -n "${CONTROL_FIRST_SEEN[$CID]:-}" ]]; then
-      SCRIPT_STATUS["$SCRIPT_NAME"]="DUPLICATE"
+    IFS='|' read -r ACTUAL_CID _ ACTUAL_COUNT <<< "$entry"
+
+    if [[ "$ACTUAL_CID" != "$EXPECTED" ]]; then
+      SCRIPT_STATUS["$SCRIPT_NAME"]="FAIL"
+      SCRIPT_FAIL_REASON["$SCRIPT_NAME"]="WRONG_CONTROL: got $ACTUAL_CID, expected $EXPECTED"
+    elif [[ "$ACTUAL_COUNT" -gt 1 ]]; then
+      SCRIPT_STATUS["$SCRIPT_NAME"]="FAIL"
+      SCRIPT_FAIL_REASON["$SCRIPT_NAME"]="HIGH_COUNT: $ACTUAL_CID triggered with count=$ACTUAL_COUNT (expected 1)"
+    elif [[ -n "${CONTROL_FIRST_SEEN[$ACTUAL_CID]:-}" ]]; then
+      SCRIPT_STATUS["$SCRIPT_NAME"]="FAIL"
+      FIRST="${CONTROL_FIRST_SEEN[$ACTUAL_CID]}"
+      SCRIPT_FAIL_REASON["$SCRIPT_NAME"]="DUPLICATE: $ACTUAL_CID already triggered by $FIRST"
     else
-      SCRIPT_STATUS["$SCRIPT_NAME"]="OK"
-      CONTROL_FIRST_SEEN["$CID"]="$SCRIPT_NAME"
+      SCRIPT_STATUS["$SCRIPT_NAME"]="PASS"
+      CONTROL_FIRST_SEEN["$ACTUAL_CID"]="$SCRIPT_NAME"
     fi
   fi
 done
 
-# Print results per script
+# Print per-script results
 for SCRIPT_NAME in "${SCRIPTS[@]}"; do
-  echo "$SCRIPT_NAME:" | tee -a "$RESULTS_FILE"
   CONTROLS="${SCRIPT_CONTROLS[$SCRIPT_NAME]:-}"
-  STATUS="${SCRIPT_STATUS[$SCRIPT_NAME]:-UNKNOWN}"
+  STATUS="${SCRIPT_STATUS[$SCRIPT_NAME]:-FAIL}"
+  EXPECTED="${EXPECTED_CONTROL[$SCRIPT_NAME]:-UNKNOWN}"
+
+  printf "%-20s  expected=%-7s  " "$SCRIPT_NAME" "$EXPECTED" | tee -a "$RESULTS_FILE"
 
   if [[ -z "$CONTROLS" ]]; then
-    echo "  (none)" | tee -a "$RESULTS_FILE"
+    printf "actual=(none)\n" | tee -a "$RESULTS_FILE"
   else
+    ACTUAL_LIST=""
     while IFS= read -r entry; do
       [[ -z "$entry" ]] && continue
-      IFS='|' read -r CID CNAME CCOUNT <<< "$entry"
-      echo "  $CID $CNAME: $CCOUNT" | tee -a "$RESULTS_FILE"
+      IFS='|' read -r CID _ COUNT <<< "$entry"
+      ACTUAL_LIST="${ACTUAL_LIST:+$ACTUAL_LIST, }${CID}(${COUNT})"
     done <<< "$CONTROLS"
+    printf "actual=%-20s  " "$ACTUAL_LIST" | tee -a "$RESULTS_FILE"
   fi
 
-  # Build status message
-  case "$STATUS" in
-    OK)
-      echo "  STATUS: OK (1 control, count=1)" | tee -a "$RESULTS_FILE"
-      ;;
-    DUPLICATE)
-      entry=$(head -1 <<< "$CONTROLS")
-      IFS='|' read -r CID _ _ <<< "$entry"
-      FIRST="${CONTROL_FIRST_SEEN[$CID]:-unknown}"
-      echo "  STATUS: DUPLICATE (same control as $FIRST)" | tee -a "$RESULTS_FILE"
-      ;;
-    MULTI)
-      echo "  STATUS: MULTI (triggers multiple controls)" | tee -a "$RESULTS_FILE"
-      ;;
-    NO_TRIGGER)
-      echo "  STATUS: NO_TRIGGER (no controls detected)" | tee -a "$RESULTS_FILE"
-      ;;
-    HIGH_COUNT)
-      echo "  STATUS: HIGH_COUNT (count > 1)" | tee -a "$RESULTS_FILE"
-      ;;
-    ERROR)
-      echo "  STATUS: ERROR (script failed)" | tee -a "$RESULTS_FILE"
-      ;;
-    *)
-      echo "  STATUS: UNKNOWN" | tee -a "$RESULTS_FILE"
-      ;;
-  esac
-  echo "" | tee -a "$RESULTS_FILE"
+  if [[ "$STATUS" == "PASS" ]]; then
+    printf "PASS\n" | tee -a "$RESULTS_FILE"
+  else
+    REASON="${SCRIPT_FAIL_REASON[$SCRIPT_NAME]:-unknown}"
+    printf "FAIL  [%s]\n" "$REASON" | tee -a "$RESULTS_FILE"
+  fi
 done
 
+echo "" | tee -a "$RESULTS_FILE"
 echo "=== SUMMARY ===" | tee -a "$RESULTS_FILE"
 echo "" | tee -a "$RESULTS_FILE"
 
-for STATUS_TYPE in OK DUPLICATE MULTI NO_TRIGGER HIGH_COUNT ERROR; do
-  MATCHING=()
-  for SCRIPT_NAME in "${SCRIPTS[@]}"; do
-    if [[ "${SCRIPT_STATUS[$SCRIPT_NAME]:-}" == "$STATUS_TYPE" ]]; then
-      MATCHING+=("${SCRIPT_NAME%.sh}")
-    fi
-  done
+PASS_COUNT=0
+FAIL_COUNT=0
+FAIL_SCRIPTS=()
 
-  if [[ ${#MATCHING[@]} -gt 0 ]]; then
-    case "$STATUS_TYPE" in
-      OK)         LABEL="OK (1 control, count=1)" ;;
-      DUPLICATE)  LABEL="DUPLICATE (same control as another OK script)" ;;
-      MULTI)      LABEL="MULTI (triggers multiple controls)" ;;
-      NO_TRIGGER) LABEL="NO_TRIGGER (no controls detected)" ;;
-      HIGH_COUNT) LABEL="HIGH_COUNT (count > 1)" ;;
-      ERROR)      LABEL="ERROR (script execution failed)" ;;
-    esac
-    echo "$LABEL: $(IFS=', '; echo "${MATCHING[*]}")" | tee -a "$RESULTS_FILE"
+for SCRIPT_NAME in "${SCRIPTS[@]}"; do
+  STATUS="${SCRIPT_STATUS[$SCRIPT_NAME]:-FAIL}"
+  if [[ "$STATUS" == "PASS" ]]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAIL_SCRIPTS+=("${SCRIPT_NAME%.sh}")
   fi
 done
+
+TOTAL="${#SCRIPTS[@]}"
+echo "Results: $PASS_COUNT/$TOTAL scripts PASS" | tee -a "$RESULTS_FILE"
+
+if [[ $FAIL_COUNT -gt 0 ]]; then
+  echo "Failed:  $(IFS=', '; echo "${FAIL_SCRIPTS[*]}")" | tee -a "$RESULTS_FILE"
+fi
+
+echo "" | tee -a "$RESULTS_FILE"
+
+if [[ $FAIL_COUNT -eq 0 && $TOTAL -eq ${#EXPECTED_CONTROL[@]} ]]; then
+  echo "OBJECTIVE MET: all $TOTAL scripts trigger exactly 1 unique kubescape control with count=1" | tee -a "$RESULTS_FILE"
+  OBJECTIVE_MET=0
+else
+  echo "OBJECTIVE NOT MET: $FAIL_COUNT/$TOTAL scripts failed" | tee -a "$RESULTS_FILE"
+  OBJECTIVE_MET=1
+fi
 
 echo "" | tee -a "$RESULTS_FILE"
 echo "Full results saved to: $RESULTS_FILE" | tee -a "$RESULTS_FILE"
 echo "Individual scan outputs in: $OUTPUT_DIR/" | tee -a "$RESULTS_FILE"
 echo "Completed: $(date)" | tee -a "$RESULTS_FILE"
+
+exit $OBJECTIVE_MET

@@ -132,9 +132,9 @@ func checkK01All(ctx context.Context, dep *appsv1.Deployment, targetDeployment s
 }
 
 // checkK03 verifies if the RBAC vulnerability has been fixed
-// Sub-issues: 0=C-0015(secrets-access), 1=C-0188(pod-create), 2=C-0007(delete), 3=C-0035(admin-escalation),
+// Sub-issues: 0=C-0015(secrets-access), 1=C-0188(pod-create), 2=C-0007(delete),
 //
-//	4=C-0187(wildcard), 5=C-0063(portforward), 6=C-0002(exec)
+//	3=C-0063(portforward), 4=C-0002(exec)
 //
 //nolint:gocyclo // Each switch case checks one isolated RBAC resource; complexity is intentional
 func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace string, subIssue *int) (bool, error) {
@@ -188,39 +188,7 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check delete binding: %w", err)
 			}
-		case 3: // Admin escalation ClusterRole + ClusterRoleBinding
-			clusterRole := &rbacv1.ClusterRole{}
-			clusterRoleName := fmt.Sprintf("%s-admin-escalation-role", namespace)
-			if err := c.Get(ctx, client.ObjectKey{Name: clusterRoleName}, clusterRole); err == nil {
-				logger.Info("K03 vulnerability still active: admin escalation ClusterRole exists", "target", targetDeployment)
-				return false, nil
-			} else if !errors.IsNotFound(err) {
-				return false, fmt.Errorf("failed to check ClusterRole %s: %w", clusterRoleName, err)
-			}
-			clusterBinding := &rbacv1.ClusterRoleBinding{}
-			clusterBindingName := fmt.Sprintf("%s-admin-escalation-binding", namespace)
-			if err := c.Get(ctx, client.ObjectKey{Name: clusterBindingName}, clusterBinding); err == nil {
-				logger.Info("K03 vulnerability still active: admin escalation ClusterRoleBinding exists", "target", targetDeployment)
-				return false, nil
-			} else if !errors.IsNotFound(err) {
-				return false, fmt.Errorf("failed to check ClusterRoleBinding %s: %w", clusterBindingName, err)
-			}
-		case 4: // Wildcard permissions role + binding
-			role := &rbacv1.Role{}
-			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-wildcard-role", namespace), Namespace: namespace}, role); err == nil {
-				logger.Info("K03 vulnerability still active: wildcard role exists", "target", targetDeployment)
-				return false, nil
-			} else if !errors.IsNotFound(err) {
-				return false, fmt.Errorf("failed to check wildcard role: %w", err)
-			}
-			binding := &rbacv1.RoleBinding{}
-			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-wildcard-binding", namespace), Namespace: namespace}, binding); err == nil {
-				logger.Info("K03 vulnerability still active: wildcard binding exists", "target", targetDeployment)
-				return false, nil
-			} else if !errors.IsNotFound(err) {
-				return false, fmt.Errorf("failed to check wildcard binding: %w", err)
-			}
-		case 5: // Portforward role + binding
+		case 3: // Portforward role + binding
 			role := &rbacv1.Role{}
 			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-portforward-role", namespace), Namespace: namespace}, role); err == nil {
 				logger.Info("K03 vulnerability still active: portforward role exists", "target", targetDeployment)
@@ -235,7 +203,7 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check portforward binding: %w", err)
 			}
-		case 6: // Exec role + binding
+		case 4: // Exec role + binding
 			role := &rbacv1.Role{}
 			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-exec-role", namespace), Namespace: namespace}, role); err == nil {
 				logger.Info("K03 vulnerability still active: exec role exists", "target", targetDeployment)
