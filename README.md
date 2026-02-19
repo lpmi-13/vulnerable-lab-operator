@@ -4,35 +4,25 @@ Sometimes, it's helpful to practice identifying security vulnerabilities in a ru
 
 ## Owasp categories
 
-[K01: Insecure Workload Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K01-insecure-workload-configurations)
+Implemented in this version:
 
-[K02: Supply Chain Vulnerabilities](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K02-supply-chain-vulnerabilities) (we're skipping this, since it's the only one that would require trivy, and I'm trying to limit to scanning tools that need to be used)
+- [K01: Insecure Workload Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K01-insecure-workload-configurations)
+- [K03: Overly Permissive RBAC Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K03-overly-permissive-rbac)
+- [K07: Missing Network Segmentation Controls](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K07-network-segmentation)
+- [K08: Secrets Management Failures](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K08-secrets-management)
 
-[K03: Overly Permissive RBAC Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K03-overly-permissive-rbac)
+Not implemented in this version (documented here for completeness):
 
-[K04: Lack of Centralized Policy Enforcement](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K04-policy-enforcement) (we're skipping this one, since it's difficult to detect controls that evaluate the results of scans)
-
-[K05: Inadequate Logging and Monitoring](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K05-inadequate-logging) (we're also skipping this one for now, since it's detecting an absence of something outside the cluster)
-
-[K06: Broken Authentication Mechanisms](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K06-broken-authentication)
-
-[K07: Missing Network Segmentation Controls](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K07-network-segmentation)
-
-[K08: Secrets Management Failures](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K08-secrets-management)
-
-[K09: Misconfigured Cluster Components](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K09-misconfigured-cluster-components)
-(we're skipping this one because it would require cluster-level and admin)
-
-[K10: Outdated and Vulnerable Kubernetes Components](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K10-vulnerable-components)
-(we're skipping this one for the same reason as K09)
-
-> NB: Becuase K04/K05/K09/K10 are all a bit tricky/brittle to detect, we've skipped them here, but they're all definitely part of a wider security audit that should be done in a production system.
+- [K02: Supply Chain Vulnerabilities](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K02-supply-chain-vulnerabilities) (not implemented; would require image scanning tooling)
+- [K04: Lack of Centralized Policy Enforcement](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K04-policy-enforcement) (not implemented; depends on external policy infra)
+- [K05: Inadequate Logging and Monitoring](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K05-inadequate-logging) (not implemented; depends on external logging)
+- [K06: Broken Authentication Mechanisms](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K06-broken-authentication) (not implemented in current operator logic)
+- [K09: Misconfigured Cluster Components](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K09-misconfigured-cluster-components) (not implemented; cluster-level admin required)
+- [K10: Outdated and Vulnerable Kubernetes Components](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K10-vulnerable-components) (not implemented; cluster-level admin required)
 
 The first thing to do is run some scanners to see what you can pick up (or you can eyeball the cluster/spec/etc, but the scanners are probably what you'll be using in production automation).
 
 - [kubescape](https://kubescape.io/docs/install-cli/) (for K01, K03, K07, K08)
-- kubeaudit (for K01, K06, K08) - deprecated, team recommends moving to kube-bench
-- [kube-bench](https://aquasecurity.github.io/kube-bench/v0.6.7/installation/) (for K09)
 - [kube-score](https://github.com/zegl/kube-score)
 
 ### scanning commands
@@ -64,53 +54,35 @@ $ kubectl api-resources --verbs=list --namespaced -o name \
   | kube-score score -
 ```
 
-## Sub-categories
+## Sub-categories (Implemented)
 
-Each vulnerability category has multiple sub-issues that are randomly selected:
+Each implemented vulnerability category has sub-issues that are randomly selected:
 
-- K01 (Insecure Workload Configurations) - 9 sub-issues:
+- K01 (Insecure Workload Configurations) - 5 sub-issues:
 
   1. Privileged container - Sets privileged: true (Kubescape C-0057)
   2. Running as root - Sets runAsUser: 0 (Kubescape C-0013)
-  3. Dangerous capabilities - Adds SYS_ADMIN, NET_ADMIN capabilities (Kubescape C-0046)
-  4. Allow privilege escalation - Sets allowPrivilegeEscalation: true (Kubescape C-0016)
-  5. ReadOnlyRootFilesystem disabled - Sets readOnlyRootFilesystem: false (Kubescape C-0017)
-  6. Missing resource limits - Removes CPU/memory resource limits (Kubescape C-0009, C-0004)
-  7. Host PID/IPC access - Sets hostPID: true and hostIPC: true (Kubescape C-0038)
-  8. HostNetwork access - Sets hostNetwork: true (Kubescape C-0041)
-  9. HostPath volume mount - Mounts host /var/log via hostPath volume (Kubescape C-0048)
+  3. Host PID/IPC access - Sets hostPID: true and hostIPC: true (Kubescape C-0038)
+  4. HostNetwork access - Sets hostNetwork: true (Kubescape C-0041)
+  5. HostPath volume mount - Mounts host /var/log via hostPath volume (Kubescape C-0048)
 
-- K03 (Overly Permissive RBAC) - 8 sub-issues:
+- K03 (Overly Permissive RBAC) - 7 sub-issues:
 
-  1. Namespace Overpermissive Access - Grants excessive permissions within namespace (secrets, configmaps, deployments)
-  2. Default Service Account Permissions - Grants unnecessary create/list/watch permissions to service account
-  3. Excessive Secrets Access - Grants broad secret read and pod delete permissions within namespace
-  4. ClusterRoleBinding to cluster-admin - Binds service account to cluster-admin ClusterRole (Kubescape C-0185)
-  5. Wildcard permissions - Grants wildcard verbs/resources in a Role (Kubescape C-0187)
-  6. Exec and portforward access - Grants pods/exec and pods/portforward permissions (Kubescape C-0063, C-0002)
-  7. Delete capabilities - Grants broad delete verb across core resources (Kubescape C-0007)
-  8. Pod creation access - Grants pods create permission within namespace (Kubescape C-0188)
+  1. Secrets access role/binding - Grants list/get/watch on secrets in namespace
+  2. Pod creation role/binding - Grants create/list/watch on pods
+  3. Delete capabilities role/binding - Grants delete on core resources
+  4. Admin escalation ClusterRole/Binding - Grants bind/escalate on roles
+  5. Wildcard role/binding - Grants wildcard access
+  6. Portforward role/binding - Grants pods/portforward
+  7. Exec role/binding - Grants pods/exec
 
-- K06 (Broken Authentication) - 3 sub-issues:
+- K07 (Missing Network Segmentation) - 1 sub-issue:
 
-  1. Default service account usage - Removes explicit serviceAccountName (kubeaudit ASAT)
-  2. Auto-mount service account token - Enables automountServiceAccountToken (Kubescape C-0034, kubeaudit)
-  3. Permissive SA with automount - Creates unrestricted ServiceAccount with automount enabled (Kubescape C-0034)
+  1. Backend microservice exposed - Removes user-service network policy (Kubescape C-0260)
 
-- K07 (Missing Network Segmentation) - 5 sub-issues:
-
-  1. Unrestricted pod-to-pod communication - Deletes all network policies (Kubescape C-0260)
-  2. Data tier exposed - Removes postgres and redis network policies (Kubescape C-0260)
-  3. Backend microservice exposed - Removes user-service network policy (Kubescape C-0260)
-  4. Monitoring tier exposed - Removes prometheus and grafana network policies (Kubescape C-0260)
-  5. Frontend exposed - Removes webapp network policy (Kubescape C-0260)
-
-- K08 (Secrets Management Failures) - 4 sub-issues:
+- K08 (Secrets Management Failures) - 1 sub-issue:
 
   1. Secret data in ConfigMaps - Stores sensitive data in ConfigMap instead of Secret (Kubescape C-0012)
-  2. Hardcoded secrets in env vars - Adds literal secret values as environment variables (Kubescape C-0012, kubeaudit)
-  3. Insecure volume permissions - Mounts secret volume with world-readable mode 0644 (kubeaudit)
-  4. Secret data in pod annotations - Adds sensitive data (API keys, passwords) as pod template annotations (Kubescape C-0012)
 
 
 
