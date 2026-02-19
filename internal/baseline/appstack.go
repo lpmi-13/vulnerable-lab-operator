@@ -229,6 +229,7 @@ http {
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
+				Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"app": "postgres-db", "app.kubernetes.io/component": "database"},
 				},
@@ -408,6 +409,7 @@ http {
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
+				Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"app": "redis-cache", "app.kubernetes.io/component": "cache"},
 				},
@@ -512,6 +514,7 @@ http {
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
+				Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"app": "prometheus", "app.kubernetes.io/component": "monitoring"},
 				},
@@ -649,6 +652,7 @@ http {
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
+				Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"app": "grafana", "app.kubernetes.io/component": "monitoring"},
 				},
@@ -793,6 +797,7 @@ http {
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
+				Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"app": "api", "app.kubernetes.io/component": "backend"},
 				},
@@ -939,6 +944,7 @@ http {
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
+				Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"app": "user-service", "app.kubernetes.io/component": "backend"},
 				},
@@ -1072,6 +1078,7 @@ http {
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
+				Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"app": "payment-service", "app.kubernetes.io/component": "backend"},
 				},
@@ -1203,6 +1210,7 @@ http {
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(int32(1)),
+				Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"app": "webapp", "app.kubernetes.io/component": "frontend"},
 				},

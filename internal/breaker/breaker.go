@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -101,6 +102,8 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 				obj.SetResourceVersion(existing.GetResourceVersion())
 				// Preserve immutable fields before update
 				preserveImmutableFields(obj, existing)
+				// Force new ReplicaSet creation on Deployments to avoid stale RS state
+				stampDeploymentRestart(obj)
 				if err := c.Update(ctx, obj); err != nil {
 					return 0, fmt.Errorf("failed to update existing resource %s: %w", obj.GetName(), err)
 				}
@@ -135,8 +138,39 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 		}
 	}
 
+	// Clean up lab-managed ConfigMaps from previous vulnerability runs (e.g., K08)
+	cmList := &corev1.ConfigMapList{}
+	if err := c.List(ctx, cmList, client.InNamespace(namespace),
+		client.MatchingLabels{"lab.security.lab/managed-by": "vulnerable-lab"}); err == nil {
+		for i := range cmList.Items {
+			key := fmt.Sprintf("%T/%s/%s", &cmList.Items[i], cmList.Items[i].Namespace, cmList.Items[i].Name)
+			if _, stillPresent := modifiedKeys[key]; !stillPresent {
+				if err := c.Delete(ctx, &cmList.Items[i]); err != nil && !errors.IsNotFound(err) {
+					return 0, fmt.Errorf("failed to delete orphaned ConfigMap %s: %w", cmList.Items[i].Name, err)
+				}
+				logger.Info("Deleted orphaned ConfigMap from previous vulnerability", "configmap", cmList.Items[i].Name)
+			}
+		}
+	}
+
 	logger.Info("Vulnerable stack deployment complete", "vulnerability", vulnerabilityID, "target", targetResource)
 	return chosenSubIssue, nil
+}
+
+// stampDeploymentRestart adds a restart annotation to a Deployment's pod template,
+// forcing the Deployment controller to create a new ReplicaSet on every Update.
+// This prevents stale RS state where the RS controller has already "observed" the
+// desired replica count but never created pods (a known issue with RS reuse after
+// repeated rapid updates).
+func stampDeploymentRestart(obj client.Object) {
+	dep, ok := obj.(*appsv1.Deployment)
+	if !ok {
+		return
+	}
+	if dep.Spec.Template.Annotations == nil {
+		dep.Spec.Template.Annotations = make(map[string]string)
+	}
+	dep.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] = time.Now().Format(time.RFC3339)
 }
 
 // preserveImmutableFields copies immutable fields from existing resource to new resource before update
@@ -705,6 +739,9 @@ func moveSecretsToConfigMap(appStack *[]client.Object, targetDeployment, namespa
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-config", targetDeployment),
 			Namespace: namespace,
+			Labels: map[string]string{
+				"lab.security.lab/managed-by": "vulnerable-lab",
+			},
 			Annotations: map[string]string{
 				"config.kubernetes.io/contains-secrets": "true",
 			},

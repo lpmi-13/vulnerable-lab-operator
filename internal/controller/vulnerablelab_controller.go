@@ -423,6 +423,17 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 				}
 			}
 		}
+
+		// Delete all lab-managed ConfigMaps (K08 creates these outside the baseline stack)
+		cmList := &corev1.ConfigMapList{}
+		if err := r.List(ctx, cmList, client.InNamespace(namespace),
+			client.MatchingLabels{"lab.security.lab/managed-by": "vulnerable-lab"}); err == nil {
+			for i := range cmList.Items {
+				if err := r.Delete(ctx, &cmList.Items[i]); err != nil && !errors.IsNotFound(err) {
+					logger.Error(err, "Failed to delete lab-managed ConfigMap", "configmap", cmList.Items[i].Name)
+				}
+			}
+		}
 	}
 
 	// Clean up any cluster-scoped RBAC resources from K03 vulnerabilities
