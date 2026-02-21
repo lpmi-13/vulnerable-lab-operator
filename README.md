@@ -117,7 +117,31 @@ No additional setup is required - just run the operator and notifications will a
 
 ## Getting Started
 
-Quick-start: you should be able to just run `reset-improved.sh` once you have a k3s cluster running.
+### Quick Start (Local)
+
+If you already have a local k3s cluster running, the easiest path is a single command:
+
+```sh
+./scripts/lab.sh up
+```
+
+What this does:
+- Cleans up any previous lab state.
+- Installs/refreshes the CRD.
+- Seeds a default `VulnerableLab` resource.
+- Runs the operator in the foreground so you can see logs and notifications.
+
+### macOS (brief)
+
+Use a local Kubernetes distribution that provides a kubeconfig:
+- Option 1: `colima start --kubernetes`
+- Option 2: Docker Desktop with Kubernetes enabled
+
+Then make sure `kubectl config current-context` points to that cluster, and run:
+
+```sh
+./scripts/lab.sh up
+```
 
 ### Vulnerability Selection and Persistence Behavior
 
@@ -174,11 +198,11 @@ spec:
 EOF
 ```
 
-
 ### Prerequisites
 - go version v1.24.0+
 - docker version 17.03+.
 - kubectl version v1.11.3+.
+- jq (used by the reset/cleanup logic)
 - Access to a Kubernetes v1.11.3+ cluster.
 
 ### To Deploy on the cluster
