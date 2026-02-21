@@ -332,7 +332,7 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 
 		// Send change notification with 30-second cooldown
 		if wasWatchTriggered {
-			r.Notifier.SendChange(namespace, "Change detected, but the vulnerability is still present. Keep trying!")
+			r.Notifier.SendChange(namespace, "Change detected (this might also be regular cluster churn), but the vulnerability is still present. Keep trying!")
 		}
 
 		logger.Info("Vulnerability not yet remediated", "target", lab.Status.TargetResource)
