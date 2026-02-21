@@ -7,51 +7,49 @@ Sometimes, it's helpful to practice identifying security vulnerabilities in a ru
 Implemented in this version:
 
 - [K01: Insecure Workload Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K01-insecure-workload-configurations)
+
 - [K03: Overly Permissive RBAC Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K03-overly-permissive-rbac)
+
 - [K07: Missing Network Segmentation Controls](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K07-network-segmentation)
+
 - [K08: Secrets Management Failures](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K08-secrets-management)
+
 
 Not implemented in this version (documented here for completeness):
 
 - [K02: Supply Chain Vulnerabilities](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K02-supply-chain-vulnerabilities) (not implemented; would require image scanning tooling)
+
 - [K04: Lack of Centralized Policy Enforcement](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K04-policy-enforcement) (not implemented; depends on external policy infra)
+
 - [K05: Inadequate Logging and Monitoring](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K05-inadequate-logging) (not implemented; depends on external logging)
+
 - [K06: Broken Authentication Mechanisms](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K06-broken-authentication) (not implemented in current operator logic)
+
 - [K09: Misconfigured Cluster Components](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K09-misconfigured-cluster-components) (not implemented; cluster-level admin required)
+
 - [K10: Outdated and Vulnerable Kubernetes Components](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K10-vulnerable-components) (not implemented; cluster-level admin required)
 
 The first thing to do is run some scanners to see what you can pick up (or you can eyeball the cluster/spec/etc, but the scanners are probably what you'll be using in production automation).
 
-- [kubescape](https://kubescape.io/docs/install-cli/) (for K01, K03, K07, K08)
-- [kube-score](https://github.com/zegl/kube-score)
+- [kubescape](https://kubescape.io/docs/install-cli/) (this should pick up all the issues in the  K01, K03, K07, K08 categories but might not pick up things from other OWASP categories)
 
 ### scanning commands
 
 Find the vulnerabilities by running one of the following scans:
 
-- Note on kubescape versions: kubescape checks for newer releases on each run. If you see a warning like "current version '4.x' is not updated to the latest release: 'v3.x'", treat it as a version-check mismatch. This is just a warning, and the scan should still work. To silence the warning while staying on the latest version, set `KUBESCAPE_SKIP_UPDATE_CHECK=1` when you run kubescape.
-
 - scan the entire namespace with kubescape
 ```sh
-$ KUBESCAPE_SKIP_UPDATE_CHECK=1 kubescape scan --include-namespaces test-lab
+$ kubescape scan --include-namespaces test-lab
 ```
 
 - scan a specific deployment in the namespace with kubescape
 ```sh
-$ KUBESCAPE_SKIP_UPDATE_CHECK=1 kubescape scan workload Deployment/<deployment-name> --include namespaces test-lab
+$ kubescape scan workload Deployment/<deployment-name> --include namespaces test-lab
 ```
 
 - scan with kubescape using one of the built-in frameworks (nsa/mitre)
 ```sh
-$ KUBESCAPE_SKIP_UPDATE_CHECK=1 kubescape scan framework mitre --include-namespaces test-lab
-```
-> some of the vulnerabilities don't show up in the stock kubescape scan, so if you don't see something in one of the above scans, try each of the frameworks.
-
-- scan all the deployment yaml manifests with kube-score (this one has to scan file contents, so it's a bit gnarly)
-```sh
-$ kubectl api-resources --verbs=list --namespaced -o name \
-  | xargs -n1 -I{} bash -c "kubectl get {} -n test-lab -oyaml && echo ---" \
-  | kube-score score -
+$ kubescape scan framework mitre --include-namespaces test-lab
 ```
 
 ## Sub-categories (Implemented)
@@ -92,7 +90,7 @@ The operator is geared toward two distinct, though related, use cases.
 
 2. Running it in a remote ephemeral namespace for teams to test out their security scanning (I have no idea if anybody actually wants to do this, but I tried to make it as easy as possible)
 
-For the first case, we just clone this repository and run `make manifests`, `make install` and `make run`, which is not at all how you would normally deploy an operator in a production context, but it gives us a few advantages.
+For the first case, we're running the compiled binary on the VM, which is not at all how you would normally deploy an operator in a production context, but it gives us a few advantages.
 
 - We don't want the operator itself to get flagged by the scans, and this way it doesn't actually run in the cluster, so it won't interfere with the investigation of the learners..
 - This is a completely ephemeral environment of a single node k3s cluster, and it's much easier and quicker than needing to deal with a container registry.
@@ -100,32 +98,26 @@ For the first case, we just clone this repository and run `make manifests`, `mak
 
 ## Sequence of events in the labs
 
-The custom playground will download the repo and build the operator. It will start the operator and notify the user via terminal messages every time the operator changes state. The user can continue finding and fixing the vulnerabilities as long as they want.
+The custom playground will start the cluster and install the CRD. It will start the operator and notify the user via a notifications tab available on localhost:8888 every time the operator changes state. The user can continue finding and fixing the vulnerabilities as long as they want.
 
-### Terminal Notifications
+### Cluster Notifications
 
-The operator provides real-time feedback about cluster status directly through terminal notifications. Notifications are broadcast to all active terminals automatically by the operator itself.
+![notifications-tab](./notifications-tab.png)
 
-You'll see notifications when:
+The operator provides real-time feedback about cluster status directly through SSE notifications available in a browser tab on localhost:8888. Notifications are sent directly to the broswer by the operator itself, and there's logic to send a pop-up notification if the tab isn't in focus.
+
+You'll see notification messages when:
 - Initial cluster setup begins
 - The cluster is ready for scanning
 - A change is detected but the vulnerability persists
 - A vulnerability is successfully remediated
 - The cluster is being reset for the next challenge
 
-The operator writes directly to `/dev/pts/*` terminal devices with built-in deduplication to prevent duplicate notifications. No additional setup is required - just run the operator with `make run` and notifications will appear in all active terminal sessions.
+No additional setup is required - just run the operator and notifications will appear in the notifications browser tab.
 
 ## Getting Started
 
-Quick-start: if nothing is happening (or to reset things to a fresh state), run these commands, in order:
-- kubectl delete vulnerablelab test-lab
-- kubectl delete ns test-lab --ignore-not-found
-- make manifests (you probably don't need this unless you updated code in the operator)
-- make install
-- make run
-- and then you can create the CRD. The operator supports different levels of randomization and persistence across remediation cycles.
-
-> examples of the final step are below, and it's the thing that actually creates the CRD...the reconciler won't do anything until that happens
+Quick-start: you should be able to just run `reset-improved.sh` once you have a k3s cluster running.
 
 ### Vulnerability Selection and Persistence Behavior
 
