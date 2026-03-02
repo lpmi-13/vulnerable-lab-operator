@@ -1,21 +1,22 @@
 package notifier
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
 
 const testMessageVulnApplied = "vulnerability-applied"
 
-// receiveWithTimeout attempts to receive from a channel with a timeout
+// receiveWithTimeout attempts to receive from a channel with a timeout.
 //
 //nolint:unparam // duration parameter kept for flexibility even though currently always the same
-func receiveWithTimeout(ch <-chan string, d time.Duration) (string, bool) {
+func receiveWithTimeout(ch <-chan Event, d time.Duration) (Event, bool) {
 	select {
 	case msg := <-ch:
 		return msg, true
 	case <-time.After(d):
-		return "", false
+		return Event{}, false
 	}
 }
 
@@ -49,7 +50,7 @@ func TestSubscribe(t *testing.T) {
 		t.Fatal("Subscribe() returned nil cleanup function")
 	}
 
-	// Verify subscriber was registered
+	// Verify subscriber was registered.
 	n.mu.RLock()
 	count := len(n.subscribers)
 	n.mu.RUnlock()
@@ -58,16 +59,16 @@ func TestSubscribe(t *testing.T) {
 		t.Errorf("expected 1 subscriber, got %d", count)
 	}
 
-	// Call cleanup
+	// Call cleanup.
 	cleanup()
 
-	// Verify cleanup closes channel
+	// Verify cleanup closes channel.
 	_, ok := <-ch
 	if ok {
 		t.Error("channel was not closed by cleanup")
 	}
 
-	// Verify subscriber was removed
+	// Verify subscriber was removed.
 	n.mu.RLock()
 	count = len(n.subscribers)
 	n.mu.RUnlock()
@@ -77,175 +78,154 @@ func TestSubscribe(t *testing.T) {
 	}
 }
 
-func TestSendImmediateDelivery(t *testing.T) {
+func TestSendEventImmediateDelivery(t *testing.T) {
 	n := New()
 	ch, cleanup := n.Subscribe()
 	defer cleanup()
 
-	// Clear any initial state messages
-	select {
-	case <-ch:
-	default:
-	}
-
-	// First message should be delivered immediately
-	n.Send("lab1", testMessageVulnApplied)
+	n.SendEvent("lab1", Event{Message: testMessageVulnApplied, ChallengeID: "c1"})
 
 	msg, ok := receiveWithTimeout(ch, 100*time.Millisecond)
 	if !ok {
 		t.Fatal("expected message to be delivered immediately")
 	}
-	if msg != testMessageVulnApplied {
-		t.Errorf("expected %q, got %q", testMessageVulnApplied, msg)
+	if msg.Message != testMessageVulnApplied {
+		t.Errorf("expected %q, got %q", testMessageVulnApplied, msg.Message)
+	}
+	if msg.ChallengeID != "c1" {
+		t.Errorf("expected challenge ID c1, got %q", msg.ChallengeID)
 	}
 }
 
-func TestSendDuplicateSuppression(t *testing.T) {
+func TestSendEventDuplicateSuppression(t *testing.T) {
 	n := New()
 	ch, cleanup := n.Subscribe()
 	defer cleanup()
 
-	// Clear any initial state messages
-	select {
-	case <-ch:
-	default:
-	}
+	event := Event{Message: testMessageVulnApplied, ChallengeID: "c1"}
+	n.SendEvent("lab1", event)
 
-	// Send first message
-	n.Send("lab1", testMessageVulnApplied)
-	msg, ok := receiveWithTimeout(ch, 100*time.Millisecond)
+	_, ok := receiveWithTimeout(ch, 100*time.Millisecond)
 	if !ok {
 		t.Fatal("expected first message")
 	}
-	if msg != testMessageVulnApplied {
-		t.Errorf("expected %q, got %q", testMessageVulnApplied, msg)
-	}
 
-	// Send same message again immediately - should be suppressed
-	n.Send("lab1", testMessageVulnApplied)
-
-	// Should not receive duplicate
+	// Same message + challenge should be suppressed.
+	n.SendEvent("lab1", event)
 	_, ok = receiveWithTimeout(ch, 100*time.Millisecond)
 	if ok {
-		t.Error("duplicate message should have been suppressed")
+		t.Error("duplicate event should have been suppressed")
 	}
 }
 
-func TestSendDebouncing(t *testing.T) {
+func TestSendEventNotSuppressedAcrossChallenges(t *testing.T) {
 	n := New()
 	ch, cleanup := n.Subscribe()
 	defer cleanup()
 
-	// Clear any initial state messages
-	select {
-	case <-ch:
-	default:
+	n.SendEvent("lab1", Event{Message: testMessageVulnApplied, ChallengeID: "c1"})
+	_, ok := receiveWithTimeout(ch, 100*time.Millisecond)
+	if !ok {
+		t.Fatal("expected first event")
 	}
 
-	// Send first message
-	n.Send("lab1", testMessageVulnApplied)
+	// Avoid the debounce interval so this test exercises dedupe behavior only.
+	time.Sleep(2100 * time.Millisecond)
+
+	// Same message with a different challenge ID should be treated as new.
+	n.SendEvent("lab1", Event{Message: testMessageVulnApplied, ChallengeID: "c2"})
 	msg, ok := receiveWithTimeout(ch, 100*time.Millisecond)
 	if !ok {
-		t.Fatal("expected first message")
+		t.Fatal("expected second event for new challenge")
 	}
-	if msg != testMessageVulnApplied {
-		t.Errorf("expected %q, got %q", testMessageVulnApplied, msg)
+	if msg.ChallengeID != "c2" {
+		t.Errorf("expected challenge ID c2, got %q", msg.ChallengeID)
+	}
+}
+
+func TestSendEventDebouncing(t *testing.T) {
+	n := New()
+	ch, cleanup := n.Subscribe()
+	defer cleanup()
+
+	n.SendEvent("lab1", Event{Message: testMessageVulnApplied, ChallengeID: "c1"})
+	_, ok := receiveWithTimeout(ch, 100*time.Millisecond)
+	if !ok {
+		t.Fatal("expected first event")
 	}
 
-	// Send second message within 2 seconds (should be debounced)
+	// Second event within 2 seconds should be debounced.
 	time.Sleep(500 * time.Millisecond)
-	n.Send("lab1", "vulnerability-remediated")
+	n.SendEvent("lab1", Event{Message: "vulnerability-remediated", ChallengeID: "c1"})
 
-	// Should not receive immediately
 	_, ok = receiveWithTimeout(ch, 100*time.Millisecond)
 	if ok {
-		t.Error("message should have been debounced, not delivered immediately")
+		t.Error("event should have been debounced, not delivered immediately")
 	}
 
-	// Wait for debounce interval to complete (2 seconds from first message)
 	time.Sleep(2 * time.Second)
 
-	// Should now receive the debounced message
-	msg, ok = receiveWithTimeout(ch, 100*time.Millisecond)
+	msg, ok := receiveWithTimeout(ch, 100*time.Millisecond)
 	if !ok {
-		t.Fatal("expected debounced message after interval")
+		t.Fatal("expected debounced event after interval")
 	}
-	if msg != "vulnerability-remediated" {
-		t.Errorf("expected 'vulnerability-remediated', got %q", msg)
+	if msg.Message != "vulnerability-remediated" {
+		t.Errorf("expected %q, got %q", "vulnerability-remediated", msg.Message)
 	}
 }
 
-func TestSendNilNotifierNoOp(t *testing.T) {
+func TestSendEventNilNotifierNoOp(t *testing.T) {
 	var n *Notifier
-	// Should not panic
-	n.Send("lab1", "test")
+	n.SendEvent("lab1", Event{Message: "test"})
 }
 
-func TestSendChangeImmediateFirstCall(t *testing.T) {
+func TestSendChangeEventImmediateFirstCall(t *testing.T) {
 	n := New()
 	ch, cleanup := n.Subscribe()
 	defer cleanup()
 
-	// Clear any initial state messages
-	select {
-	case <-ch:
-	default:
-	}
-
-	// First SendChange should deliver immediately
-	n.SendChange("lab1", "change-detected")
+	n.SendChangeEvent("lab1", Event{Message: "change-detected", ChallengeID: "c1"})
 
 	msg, ok := receiveWithTimeout(ch, 100*time.Millisecond)
 	if !ok {
-		t.Fatal("expected first SendChange to deliver immediately")
+		t.Fatal("expected first SendChangeEvent to deliver immediately")
 	}
-	if msg != "change-detected" {
-		t.Errorf("expected 'change-detected', got %q", msg)
+	if msg.Message != "change-detected" {
+		t.Errorf("expected %q, got %q", "change-detected", msg.Message)
 	}
 }
 
-func TestSendChangeCooldown(t *testing.T) {
+func TestSendChangeEventCooldown(t *testing.T) {
 	n := New()
 	ch, cleanup := n.Subscribe()
 	defer cleanup()
 
-	// Clear any initial state messages
-	select {
-	case <-ch:
-	default:
-	}
-
-	// First SendChange
-	n.SendChange("lab1", "change-detected-1")
+	n.SendChangeEvent("lab1", Event{Message: "change-detected-1", ChallengeID: "c1"})
 	msg, ok := receiveWithTimeout(ch, 100*time.Millisecond)
 	if !ok {
 		t.Fatal("expected first message")
 	}
-	if msg != "change-detected-1" {
-		t.Errorf("expected 'change-detected-1', got %q", msg)
+	if msg.Message != "change-detected-1" {
+		t.Errorf("expected %q, got %q", "change-detected-1", msg.Message)
 	}
 
-	// Second SendChange within cooldown window (30s) should be suppressed
 	time.Sleep(100 * time.Millisecond)
-	n.SendChange("lab1", "change-detected-2")
+	n.SendChangeEvent("lab1", Event{Message: "change-detected-2", ChallengeID: "c1"})
 
-	// Should not receive second message
 	_, ok = receiveWithTimeout(ch, 100*time.Millisecond)
 	if ok {
-		t.Error("second SendChange within cooldown should have been suppressed")
+		t.Error("second SendChangeEvent within cooldown should have been suppressed")
 	}
 }
 
-func TestSendChangeNilNotifierNoOp(t *testing.T) {
+func TestSendChangeEventNilNotifierNoOp(t *testing.T) {
 	var n *Notifier
-	// Should not panic
-	n.SendChange("lab1", "test")
+	n.SendChangeEvent("lab1", Event{Message: "test"})
 }
 
 func TestFanOutToMultipleSubscribers(t *testing.T) {
 	n := New()
 
-	// Subscribe 3 clients
 	ch1, cleanup1 := n.Subscribe()
 	defer cleanup1()
 	ch2, cleanup2 := n.Subscribe()
@@ -253,26 +233,16 @@ func TestFanOutToMultipleSubscribers(t *testing.T) {
 	ch3, cleanup3 := n.Subscribe()
 	defer cleanup3()
 
-	// Clear any initial state messages
-	for _, ch := range []<-chan string{ch1, ch2, ch3} {
-		select {
-		case <-ch:
-		default:
-		}
-	}
+	n.SendEvent("lab1", Event{Message: "test-message", ChallengeID: "c1"})
 
-	// Send a message
-	n.Send("lab1", "test-message")
-
-	// All subscribers should receive it
-	for i, ch := range []<-chan string{ch1, ch2, ch3} {
+	for i, ch := range []<-chan Event{ch1, ch2, ch3} {
 		msg, ok := receiveWithTimeout(ch, 100*time.Millisecond)
 		if !ok {
 			t.Errorf("subscriber %d did not receive message", i+1)
 			continue
 		}
-		if msg != "test-message" {
-			t.Errorf("subscriber %d got %q, want 'test-message'", i+1, msg)
+		if msg.Message != "test-message" {
+			t.Errorf("subscriber %d got %q, want %q", i+1, msg.Message, "test-message")
 		}
 	}
 }
@@ -282,67 +252,51 @@ func TestFanOutSkipsFullChannels(t *testing.T) {
 	ch, cleanup := n.Subscribe()
 	defer cleanup()
 
-	// Clear any initial state messages
-	select {
-	case <-ch:
-	default:
-	}
-
-	// Fill the channel buffer (capacity is 10)
+	// Fill the channel buffer (capacity is 10) using unique labs to bypass per-lab debounce.
 	for i := 0; i < 10; i++ {
-		n.Send("lab1", "msg")
-		time.Sleep(10 * time.Millisecond) // Small delay to ensure messages are sent
+		n.SendEvent(fmt.Sprintf("lab-%d", i), Event{
+			Message:     fmt.Sprintf("msg-%d", i),
+			ChallengeID: "c1",
+		})
 	}
 
-	// Channel should now be full
-	// Sending another message should not block (it should skip the full channel)
 	done := make(chan bool)
 	go func() {
-		n.Send("lab2", "should-skip")
+		n.SendEvent("lab-overflow", Event{Message: "should-skip", ChallengeID: "c1"})
 		done <- true
 	}()
 
-	// If it blocks, this will timeout
 	select {
 	case <-done:
-		// Good, it didn't block
 	case <-time.After(500 * time.Millisecond):
-		t.Error("Send blocked on full channel instead of skipping")
+		t.Error("SendEvent blocked on full channel instead of skipping")
+	}
+
+	// Drain to keep cleanup predictable.
+	for range 10 {
+		<-ch
 	}
 }
 
 func TestSubscribeCleanup(t *testing.T) {
 	n := New()
 
-	// Create 2 subscribers
 	ch1, cleanup1 := n.Subscribe()
 	defer cleanup1()
 	ch2, cleanup2 := n.Subscribe()
 
-	// Clear any initial state messages
-	for _, ch := range []<-chan string{ch1, ch2} {
-		select {
-		case <-ch:
-		default:
-		}
-	}
-
-	// Clean up second subscriber
 	cleanup2()
 
-	// Send a message
-	n.Send("lab1", "test-message")
+	n.SendEvent("lab1", Event{Message: "test-message", ChallengeID: "c1"})
 
-	// First subscriber should receive it
 	msg, ok := receiveWithTimeout(ch1, 100*time.Millisecond)
 	if !ok {
 		t.Error("subscriber 1 should have received message")
 	}
-	if msg != "test-message" {
-		t.Errorf("got %q, want 'test-message'", msg)
+	if msg.Message != "test-message" {
+		t.Errorf("got %q, want %q", msg.Message, "test-message")
 	}
 
-	// Second subscriber's channel should be closed
 	_, ok = <-ch2
 	if ok {
 		t.Error("subscriber 2 channel should be closed")
@@ -352,11 +306,9 @@ func TestSubscribeCleanup(t *testing.T) {
 func TestSubscribeReceivesCurrentState(t *testing.T) {
 	n := New()
 
-	// Send a message before subscribing
-	n.Send("lab1", "initial-state")
-	time.Sleep(100 * time.Millisecond) // Let the send complete
+	n.SendEvent("lab1", Event{Message: "initial-state", ChallengeID: "c1"})
+	time.Sleep(100 * time.Millisecond)
 
-	// New subscriber should receive current state
 	ch, cleanup := n.Subscribe()
 	defer cleanup()
 
@@ -364,7 +316,7 @@ func TestSubscribeReceivesCurrentState(t *testing.T) {
 	if !ok {
 		t.Fatal("new subscriber should receive current state immediately")
 	}
-	if msg != "initial-state" {
-		t.Errorf("expected 'initial-state', got %q", msg)
+	if msg.Message != "initial-state" {
+		t.Errorf("expected %q, got %q", "initial-state", msg.Message)
 	}
 }

@@ -2,6 +2,7 @@ package notifier
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -72,20 +73,26 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
         h1 { color: #4ec9b0; margin-bottom: 10px; }
         #status { color: #ce9178; margin-bottom: 20px; }
         .notification {
-            background: #2d2d30;
-            border-left: 4px solid #4ec9b0;
+            --accent: #4ec9b0;
+            --bg: #2d2d30;
+            background: var(--bg);
+            border-left: 4px solid var(--accent);
             padding: 12px 16px;
             margin: 8px 0;
             border-radius: 4px;
             animation: slideIn 0.3s ease-out;
         }
         .notification.new {
-            background: #264f78;
-            border-left-color: #569cd6;
+            animation: slideIn 0.3s ease-out, pulseIn 1.8s ease-out;
         }
         @keyframes slideIn {
             from { opacity: 0; transform: translateX(-20px); }
             to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes pulseIn {
+            0% { box-shadow: 0 0 0 rgba(0, 0, 0, 0); }
+            20% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+            100% { box-shadow: 0 0 0 rgba(0, 0, 0, 0); }
         }
         .timestamp { color: #858585; font-size: 0.9em; margin-right: 8px; }
         .message { color: #dcdcaa; }
@@ -101,6 +108,15 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
         const notificationsDiv = document.getElementById('notifications');
         const originalTitle = document.title;
         let titleFlashInterval = null;
+        const colorByChallenge = new Map();
+        const palette = [
+            { accent: '#4ec9b0', bg: '#243734' },
+            { accent: '#569cd6', bg: '#1f3345' },
+            { accent: '#d7ba7d', bg: '#3c3422' },
+            { accent: '#c586c0', bg: '#3a2a3d' },
+            { accent: '#9cdc6f', bg: '#2b3c24' },
+            { accent: '#ce9178', bg: '#3d2d27' }
+        ];
 
         // Request notification permission on page load
         if ('Notification' in window && Notification.permission === 'default') {
@@ -125,6 +141,40 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
             }
         }
 
+        function colorForChallenge(challengeId) {
+            const key = challengeId || 'unclassified';
+            if (!colorByChallenge.has(key)) {
+                colorByChallenge.set(key, palette[colorByChallenge.size % palette.length]);
+            }
+            return colorByChallenge.get(key);
+        }
+
+        function normalizePayload(raw) {
+            let parsed = raw;
+            try {
+                parsed = JSON.parse(raw);
+            } catch (_) {
+                return { message: raw, challengeId: 'unclassified' };
+            }
+
+            if (typeof parsed === 'string') {
+                return { message: parsed, challengeId: 'unclassified' };
+            }
+
+            if (!parsed || typeof parsed !== 'object') {
+                return { message: String(raw), challengeId: 'unclassified' };
+            }
+
+            const message = (typeof parsed.message === 'string' && parsed.message) ||
+                (typeof parsed.Message === 'string' && parsed.Message) ||
+                String(raw);
+            const challengeId = (typeof parsed.challengeId === 'string' && parsed.challengeId) ||
+                (typeof parsed.ChallengeID === 'string' && parsed.ChallengeID) ||
+                'unclassified';
+
+            return { message, challengeId };
+        }
+
         // Stop flashing when tab regains focus
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden) {
@@ -140,8 +190,12 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
         };
 
         eventSource.onmessage = (event) => {
+            const payload = normalizePayload(event.data);
+            const colors = colorForChallenge(payload.challengeId);
             const notification = document.createElement('div');
             notification.className = 'notification new';
+            notification.style.setProperty('--accent', colors.accent);
+            notification.style.setProperty('--bg', colors.bg);
 
             const timestamp = document.createElement('span');
             timestamp.className = 'timestamp';
@@ -149,7 +203,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 
             const message = document.createElement('span');
             message.className = 'message';
-            message.textContent = event.data;
+            message.textContent = payload.message;
 
             notification.appendChild(timestamp);
             notification.appendChild(message);
@@ -168,7 +222,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
                 // Browser notification popup
                 if ('Notification' in window && Notification.permission === 'granted') {
                     const n = new Notification('Cluster Notification', {
-                        body: event.data,
+                        body: payload.message,
                         icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y="75" font-size="75">🔔</text></svg>'
                     });
                     n.onclick = () => {
@@ -178,7 +232,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
                 }
 
                 // Title flashing
-                startTitleFlash(event.data);
+                startTitleFlash(payload.message);
             }
         };
 
@@ -211,15 +265,6 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info("New SSE client connected")
 
-	// Send initial connection message
-	if _, err := fmt.Fprintf(w, "data: Connected to notification stream\n\n"); err != nil {
-		logger.Error(err, "Failed to write initial message")
-		return
-	}
-	if flusher, ok := w.(http.Flusher); ok {
-		flusher.Flush()
-	}
-
 	// Stream notifications until client disconnects
 	for {
 		select {
@@ -230,7 +275,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return // Channel closed
 			}
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", msg); err != nil {
+			payload, err := json.Marshal(msg)
+			if err != nil {
+				logger.Error(err, "Failed to serialize notification event")
+				continue
+			}
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
 				logger.Error(err, "Failed to write message")
 				return
 			}

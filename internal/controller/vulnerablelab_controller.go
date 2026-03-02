@@ -37,6 +37,8 @@ type VulnerableLabReconciler struct {
 	initialSetupSent     map[string]bool
 	verificationAttempts map[string]int
 	ignoreWatchUntil     map[string]time.Time // suppress watch events during initialization
+	challengeSeq         map[string]int
+	activeChallengeID    map[string]string
 	mu                   sync.Mutex
 	// Random number generator for vulnerability selection
 	rng *rand.Rand
@@ -66,6 +68,7 @@ func (r *VulnerableLabReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Get(ctx, req.NamespacedName, &lab); err != nil {
 		if errors.IsNotFound(err) {
 			logger.Info("VulnerableLab resource deleted.")
+			r.clearActiveChallenge(req.Name)
 			// Note: We intentionally do NOT clean up lastVulnSpec here
 			// so we can detect spec changes when a new resource is created
 			return ctrl.Result{}, nil
@@ -90,7 +93,11 @@ func (r *VulnerableLabReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// If this is a new initialization (state is "") but not the first time,
 	// it means a script or user manually recreated the resource
 	if lab.Status.State == "" && !isFirstTime {
-		r.Notifier.Send(namespace, "Cluster resetting, please stand by...")
+		if r.hasActiveChallenge(namespace) {
+			r.sendEvent(namespace, "setup", "Cluster resetting, please stand by...", "", nil)
+		} else {
+			r.sendEventWithNewChallenge(namespace, "setup", "Cluster resetting, please stand by...", "", nil)
+		}
 	}
 
 	// STATE MACHINE
@@ -131,7 +138,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	}
 	if !r.initialSetupSent[namespace] {
 		r.mu.Unlock()
-		r.Notifier.Send(namespace, "Initial cluster setup in progress, please wait...")
+		r.sendEvent(namespace, "setup", "Initial cluster setup in progress, please wait...", "", nil)
 		r.mu.Lock()
 		r.initialSetupSent[namespace] = true
 	}
@@ -303,7 +310,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	logger.Info("Lab initialization complete", "vulnerability", chosenVuln, "target", targetDeployment)
 
 	message := fmt.Sprintf("Ready for scanning. A vulnerability has been introduced in the %s namespace.\nUse a scanner like kubescape to find it.", namespace)
-	r.Notifier.Send(namespace, message)
+	r.sendEvent(namespace, "ready", message, chosenVuln, &chosenSubIssue)
 
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
@@ -332,7 +339,7 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 
 		// Send change notification with 30-second cooldown
 		if wasWatchTriggered {
-			r.Notifier.SendChange(namespace, "Change detected (this might also be regular cluster churn), but the vulnerability is still present. Keep trying!")
+			r.sendChangeEvent(namespace, "change", "Change detected (this might also be regular cluster churn), but the vulnerability is still present. Keep trying!", lab.Status.ChosenVulnerability, lab.Status.ChosenSubIssue)
 		}
 
 		logger.Info("Vulnerability not yet remediated", "target", lab.Status.TargetResource)
@@ -349,7 +356,7 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 	}
 
 	// Send notification
-	r.Notifier.Send(namespace, "Vulnerability fixed! Preparing next challenge...")
+	r.sendEvent(namespace, "fixed", "Vulnerability fixed! Preparing next challenge...", lab.Status.ChosenVulnerability, lab.Status.ChosenSubIssue)
 	logger.Info("Vulnerability remediated, will reset on next reconciliation", "target", lab.Status.TargetResource)
 	return ctrl.Result{Requeue: true}, nil
 }
@@ -359,7 +366,7 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 	logger.Info("Resetting lab", "namespace", namespace)
 
 	// Send notification
-	r.Notifier.Send(namespace, "Resetting cluster")
+	r.sendEvent(namespace, "reset", "Resetting cluster", lab.Status.ChosenVulnerability, lab.Status.ChosenSubIssue)
 
 	// Check if the namespace exists
 	var ns corev1.Namespace
@@ -467,8 +474,108 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 	}
 
 	logger.Info("Lab reset complete, will initialize new challenge")
+	r.clearActiveChallenge(namespace)
 
 	return ctrl.Result{Requeue: true}, nil
+}
+
+func (r *VulnerableLabReconciler) sendEvent(namespace, kind, message, vulnerability string, subIssue *int) {
+	if r.Notifier == nil {
+		return
+	}
+
+	r.Notifier.SendEvent(namespace, notifier.Event{
+		Message:       message,
+		Kind:          kind,
+		ChallengeID:   r.ensureChallengeID(namespace),
+		Vulnerability: vulnerability,
+		SubIssue:      subIssue,
+	})
+}
+
+func (r *VulnerableLabReconciler) sendChangeEvent(namespace, kind, message, vulnerability string, subIssue *int) {
+	if r.Notifier == nil {
+		return
+	}
+
+	r.Notifier.SendChangeEvent(namespace, notifier.Event{
+		Message:       message,
+		Kind:          kind,
+		ChallengeID:   r.ensureChallengeID(namespace),
+		Vulnerability: vulnerability,
+		SubIssue:      subIssue,
+	})
+}
+
+func (r *VulnerableLabReconciler) sendEventWithNewChallenge(namespace, kind, message, vulnerability string, subIssue *int) {
+	if r.Notifier == nil {
+		return
+	}
+
+	r.Notifier.SendEvent(namespace, notifier.Event{
+		Message:       message,
+		Kind:          kind,
+		ChallengeID:   r.startNewChallenge(namespace),
+		Vulnerability: vulnerability,
+		SubIssue:      subIssue,
+	})
+}
+
+func (r *VulnerableLabReconciler) ensureChallengeID(namespace string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.activeChallengeID == nil {
+		r.activeChallengeID = make(map[string]string)
+	}
+	if r.challengeSeq == nil {
+		r.challengeSeq = make(map[string]int)
+	}
+
+	if id := r.activeChallengeID[namespace]; id != "" {
+		return id
+	}
+
+	r.challengeSeq[namespace]++
+	id := fmt.Sprintf("%s-%d", namespace, r.challengeSeq[namespace])
+	r.activeChallengeID[namespace] = id
+	return id
+}
+
+func (r *VulnerableLabReconciler) startNewChallenge(namespace string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.activeChallengeID == nil {
+		r.activeChallengeID = make(map[string]string)
+	}
+	if r.challengeSeq == nil {
+		r.challengeSeq = make(map[string]int)
+	}
+
+	r.challengeSeq[namespace]++
+	id := fmt.Sprintf("%s-%d", namespace, r.challengeSeq[namespace])
+	r.activeChallengeID[namespace] = id
+	return id
+}
+
+func (r *VulnerableLabReconciler) clearActiveChallenge(namespace string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.activeChallengeID != nil {
+		delete(r.activeChallengeID, namespace)
+	}
+}
+
+func (r *VulnerableLabReconciler) hasActiveChallenge(namespace string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.activeChallengeID == nil {
+		return false
+	}
+	return r.activeChallengeID[namespace] != ""
 }
 
 // we want a new random index on every reset

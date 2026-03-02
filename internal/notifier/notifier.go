@@ -7,10 +7,21 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+// Event represents a single notification delivered to SSE clients.
+type Event struct {
+	Message       string    `json:"message"`
+	Kind          string    `json:"kind,omitempty"`
+	ChallengeID   string    `json:"challengeId,omitempty"`
+	Vulnerability string    `json:"vulnerability,omitempty"`
+	SubIssue      *int      `json:"subIssue,omitempty"`
+	Lab           string    `json:"lab,omitempty"`
+	SentAt        time.Time `json:"sentAt"`
+}
+
 // Notifier handles sending notifications to SSE clients
 type Notifier struct {
 	mu                 sync.RWMutex
-	subscribers        map[int]chan string
+	subscribers        map[int]chan Event
 	nextID             int
 	lastNotified       map[string]*notificationState
 	lastChangeNotified map[string]time.Time
@@ -19,24 +30,24 @@ type Notifier struct {
 
 // notificationState tracks the last notification sent for a lab
 type notificationState struct {
-	lastMessage string
-	lastTime    time.Time
-	pending     string // Pending message to deliver after debounce interval
+	lastEvent Event
+	lastTime  time.Time
+	pending   *Event // Pending event to deliver after debounce interval
 }
 
 // New creates a new Notifier instance
 func New() *Notifier {
 	return &Notifier{
-		subscribers:        make(map[int]chan string),
+		subscribers:        make(map[int]chan Event),
 		lastNotified:       make(map[string]*notificationState),
 		lastChangeNotified: make(map[string]time.Time),
 		pendingTimers:      make(map[string]*time.Timer),
 	}
 }
 
-// Send sends a notification with 2-second debouncing
-// Ensures minimum 2-second interval between notifications for rapid state cycling
-func (n *Notifier) Send(labName, message string) {
+// SendEvent sends a structured notification with 2-second debouncing.
+// Ensures minimum 2-second interval between notifications for rapid state cycling.
+func (n *Notifier) SendEvent(labName string, event Event) {
 	if n == nil {
 		return // No-op if notifier is disabled
 	}
@@ -45,10 +56,11 @@ func (n *Notifier) Send(labName, message string) {
 	defer n.mu.Unlock()
 
 	now := time.Now()
+	event = normalizeEvent(labName, event, now)
 	state, exists := n.lastNotified[labName]
 
 	// Skip if same message as last notification
-	if exists && state.lastMessage == message {
+	if exists && sameLogicalEvent(state.lastEvent, event) {
 		return
 	}
 
@@ -59,8 +71,9 @@ func (n *Notifier) Send(labName, message string) {
 			timer.Stop()
 		}
 
-		// Store the message as pending
-		state.pending = message
+		// Store the event as pending
+		pending := event
+		state.pending = &pending
 
 		// Schedule delivery after remaining interval
 		remaining := 2*time.Second - time.Since(state.lastTime)
@@ -73,15 +86,15 @@ func (n *Notifier) Send(labName, message string) {
 
 	// Send immediately - no debounce needed
 	n.lastNotified[labName] = &notificationState{
-		lastMessage: message,
-		lastTime:    now,
+		lastEvent: event,
+		lastTime:  now,
 	}
 
 	// Reset the watch-triggered cooldown when a state transition occurs
 	delete(n.lastChangeNotified, labName)
 
 	// Fan-out to all SSE subscribers
-	n.fanOut(message)
+	n.fanOut(event)
 }
 
 // deliverPending delivers a pending notification after debounce interval
@@ -90,13 +103,13 @@ func (n *Notifier) deliverPending(labName string) {
 	defer n.mu.Unlock()
 
 	state, exists := n.lastNotified[labName]
-	if !exists || state.pending == "" {
+	if !exists || state.pending == nil {
 		return
 	}
 
-	message := state.pending
-	state.pending = ""
-	state.lastMessage = message
+	event := *state.pending
+	state.pending = nil
+	state.lastEvent = event
 	state.lastTime = time.Now()
 
 	// Clean up timer
@@ -106,18 +119,20 @@ func (n *Notifier) deliverPending(labName string) {
 	delete(n.lastChangeNotified, labName)
 
 	// Fan-out to all SSE subscribers
-	n.fanOut(message)
+	n.fanOut(event)
 }
 
-// SendChange sends a notification with 30-second cooldown deduplication
-// Used for "Change detected" notifications to avoid spam
-func (n *Notifier) SendChange(labName, message string) {
+// SendChangeEvent sends a structured notification with 30-second cooldown deduplication.
+// Used for "Change detected" notifications to avoid spam.
+func (n *Notifier) SendChangeEvent(labName string, event Event) {
 	if n == nil {
 		return // No-op if notifier is disabled
 	}
 
 	n.mu.Lock()
 	defer n.mu.Unlock()
+
+	event = normalizeEvent(labName, event, time.Now())
 
 	// Implement 30-second cooldown
 	lastNotify := n.lastChangeNotified[labName]
@@ -129,27 +144,27 @@ func (n *Notifier) SendChange(labName, message string) {
 	n.lastChangeNotified[labName] = time.Now()
 
 	// Fan-out to all SSE subscribers
-	n.fanOut(message)
+	n.fanOut(event)
 }
 
 // Subscribe registers a new SSE client and returns a channel and cleanup function
 // Immediately sends the current state to the new client
-func (n *Notifier) Subscribe() (<-chan string, func()) {
+func (n *Notifier) Subscribe() (<-chan Event, func()) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	id := n.nextID
 	n.nextID++
 
-	ch := make(chan string, 10) // Buffered to prevent slow clients from blocking
+	ch := make(chan Event, 10) // Buffered to prevent slow clients from blocking
 	n.subscribers[id] = ch
 
 	// Send current state to new subscriber immediately
 	// This ensures users see the current lab status when they refresh the page
 	for _, state := range n.lastNotified {
-		if state.lastMessage != "" {
+		if state.lastEvent.Message != "" {
 			select {
-			case ch <- state.lastMessage:
+			case ch <- state.lastEvent:
 				// Sent successfully
 			default:
 				// Channel shouldn't be full on first message, but handle gracefully
@@ -172,14 +187,28 @@ func (n *Notifier) Subscribe() (<-chan string, func()) {
 
 // fanOut sends a message to all subscribed SSE clients
 // Must be called with lock held
-func (n *Notifier) fanOut(message string) {
+func (n *Notifier) fanOut(event Event) {
 	for _, ch := range n.subscribers {
 		select {
-		case ch <- message:
+		case ch <- event:
 			// Sent successfully
 		default:
 			// Channel is full, skip (don't block reconciliation)
 			ctrl.Log.WithName("notifier").Info("Skipped notification to slow client")
 		}
 	}
+}
+
+func normalizeEvent(labName string, event Event, now time.Time) Event {
+	if event.Lab == "" {
+		event.Lab = labName
+	}
+	if event.SentAt.IsZero() {
+		event.SentAt = now
+	}
+	return event
+}
+
+func sameLogicalEvent(a, b Event) bool {
+	return a.Message == b.Message && a.ChallengeID == b.ChallengeID
 }
