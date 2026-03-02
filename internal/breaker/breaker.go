@@ -61,6 +61,12 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 		}
 		chosenSubIssue = sub
 	case "K03":
+		// Remove lab-managed RBAC artifacts from prior K03 runs so each sub-issue
+		// starts from a clean slate and introduces exactly one vulnerable binding.
+		if err := cleanupLabManagedRBAC(ctx, c, namespace); err != nil {
+			return 0, fmt.Errorf("failed to clean previous K03 RBAC resources: %w", err)
+		}
+
 		sub, err := applyK03ToStack(&appStack, targetResource, namespace, subIssue, rng)
 		if err != nil {
 			return 0, fmt.Errorf("failed to apply K03 vulnerability: %w", err)
@@ -181,6 +187,52 @@ func preserveImmutableFields(obj, existing client.Object) {
 		newObj.Spec.ClusterIP = existingSvc.Spec.ClusterIP
 		newObj.Spec.ClusterIPs = existingSvc.Spec.ClusterIPs
 	}
+}
+
+func cleanupLabManagedRBAC(ctx context.Context, c client.Client, namespace string) error {
+	roleList := &rbacv1.RoleList{}
+	if err := c.List(ctx, roleList, client.InNamespace(namespace),
+		client.MatchingLabels{"rbac.k8s.lab/managed-by": "vulnerable-lab"}); err != nil {
+		return fmt.Errorf("failed to list roles: %w", err)
+	}
+	for i := range roleList.Items {
+		if err := c.Delete(ctx, &roleList.Items[i]); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete role %s: %w", roleList.Items[i].Name, err)
+		}
+	}
+
+	rbList := &rbacv1.RoleBindingList{}
+	if err := c.List(ctx, rbList, client.InNamespace(namespace),
+		client.MatchingLabels{"rbac.k8s.lab/managed-by": "vulnerable-lab"}); err != nil {
+		return fmt.Errorf("failed to list rolebindings: %w", err)
+	}
+	for i := range rbList.Items {
+		if err := c.Delete(ctx, &rbList.Items[i]); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete rolebinding %s: %w", rbList.Items[i].Name, err)
+		}
+	}
+
+	crList := &rbacv1.ClusterRoleList{}
+	if err := c.List(ctx, crList, client.MatchingLabels{"rbac.k8s.lab/managed-by": "vulnerable-lab"}); err != nil {
+		return fmt.Errorf("failed to list clusterroles: %w", err)
+	}
+	for i := range crList.Items {
+		if err := c.Delete(ctx, &crList.Items[i]); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete clusterrole %s: %w", crList.Items[i].Name, err)
+		}
+	}
+
+	crbList := &rbacv1.ClusterRoleBindingList{}
+	if err := c.List(ctx, crbList, client.MatchingLabels{"rbac.k8s.lab/managed-by": "vulnerable-lab"}); err != nil {
+		return fmt.Errorf("failed to list clusterrolebindings: %w", err)
+	}
+	for i := range crbList.Items {
+		if err := c.Delete(ctx, &crbList.Items[i]); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete clusterrolebinding %s: %w", crbList.Items[i].Name, err)
+		}
+	}
+
+	return nil
 }
 
 // createNamespaceIfNotExists ensures the lab namespace exists
