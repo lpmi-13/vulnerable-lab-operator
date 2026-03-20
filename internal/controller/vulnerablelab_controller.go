@@ -51,7 +51,7 @@ type VulnerableLabReconciler struct {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
@@ -151,12 +151,12 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	//    - Selects a new random category AND sub-issue after each remediation
 	//    - Best for general vulnerability identification practice
 	//
-	// 2. Category persistence (vulnerability: "K03", no subIssue specified):
-	//    - Always uses the same category (K03) but selects random sub-issues
+	// 2. Category persistence (vulnerability: "K02", no subIssue specified):
+	//    - Always uses the same category (K02) but selects random sub-issues
 	//    - Best for focused practice on a specific vulnerability category
 	//    - Spec.Vulnerability persists across resets, Status.ChosenVulnerability gets cleared
 	//
-	// 3. Complete persistence (vulnerability: "K03", subIssue: 2):
+	// 3. Complete persistence (vulnerability: "K02", subIssue: 2):
 	//    - Always uses the exact same category AND sub-issue after each remediation
 	//    - Best for mastering one specific vulnerability through repetitive practice
 	//    - Both Spec.Vulnerability and Spec.SubIssue persist across resets
@@ -174,7 +174,7 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	} else {
 		// Complete randomization (behavior 1 above)
 		// Randomly choose both vulnerability category and sub-issue
-		vulnerabilities := []string{"K01", "K03", "K07", "K08"}
+		vulnerabilities := []string{"K01", "K02", "K03", "K05"}
 		vulnIndex := r.selectRandomIndex(len(vulnerabilities))
 		chosenVuln = vulnerabilities[vulnIndex]
 		if lab.Spec.SubIssue != nil {
@@ -192,12 +192,12 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 	switch chosenVuln {
 	case "K01":
 		viableTargets = []string{"api", "webapp", "redis-cache", "prometheus", "grafana", "postgres-db", "user-service", "payment-service"}
-	case "K03":
+	case "K02":
 		viableTargets = []string{"api", "user-service", "payment-service"} // Services that need RBAC permissions
-	case "K07":
-		viableTargets = []string{"api", "webapp", "user-service", "payment-service"} // Services affected by network policies
-	case "K08":
+	case "K03":
 		viableTargets = []string{"api", "user-service", "payment-service"} // Services that use secrets
+	case "K05":
+		viableTargets = []string{"api", "webapp", "user-service", "payment-service"} // Services affected by network policies
 	default:
 		viableTargets = []string{"api", "webapp"}
 	}
@@ -237,8 +237,8 @@ func (r *VulnerableLabReconciler) initializeLab(ctx context.Context, lab *v1alph
 		return ctrl.Result{}, err
 	}
 
-	// Verify the vulnerability is visible in the API before transitioning to StateVulnerable
-	// This prevents false positives from stale K8s API cache
+	// Verify the vulnerability is visible in the API before transitioning to StateVulnerable.
+	// This prevents false positives from stale K8s API cache.
 	targetDep := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKey{Name: targetDeployment, Namespace: namespace}, targetDep); err != nil {
 		if errors.IsNotFound(err) {
@@ -319,9 +319,9 @@ func (r *VulnerableLabReconciler) checkRemediation(ctx context.Context, lab *v1a
 	logger := log.FromContext(ctx)
 	logger.Info("Checking if vulnerability has been remediated", "vulnerability", lab.Status.ChosenVulnerability, "target", lab.Status.TargetResource)
 
-	// For K03 vulnerabilities, check for partial deletions and clean up
-	if lab.Status.ChosenVulnerability == "K03" {
-		r.cleanupOrphanedK03Resources(ctx, namespace)
+	// For K02 vulnerabilities, check for partial deletions and clean up
+	if lab.Status.ChosenVulnerability == "K02" {
+		r.cleanupOrphanedRBACResources(ctx, namespace)
 	}
 
 	isFixed, err := breaker.CheckRemediation(ctx, r.Client, lab.Status.ChosenVulnerability, lab.Status.TargetResource, namespace, lab.Status.ChosenSubIssue)
@@ -411,7 +411,7 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 		// All resources are gone, proceed with reset
 		logger.Info("All resources deleted, proceeding with reset", "namespace", namespace)
 
-		// Delete all lab-managed RBAC resources (K03 creates these outside the baseline stack)
+		// Delete all lab-managed RBAC resources (K02 creates these outside the baseline stack)
 		roleList := &rbacv1.RoleList{}
 		if err := r.List(ctx, roleList, client.InNamespace(namespace),
 			client.MatchingLabels{"rbac.k8s.lab/managed-by": "vulnerable-lab"}); err == nil {
@@ -431,7 +431,7 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 			}
 		}
 
-		// Delete all lab-managed ConfigMaps (K08 creates these outside the baseline stack)
+		// Delete all lab-managed ConfigMaps (K03 creates these outside the baseline stack)
 		cmList := &corev1.ConfigMapList{}
 		if err := r.List(ctx, cmList, client.InNamespace(namespace),
 			client.MatchingLabels{"lab.security.lab/managed-by": "vulnerable-lab"}); err == nil {
@@ -443,8 +443,8 @@ func (r *VulnerableLabReconciler) resetLab(ctx context.Context, lab *v1alpha1.Vu
 		}
 	}
 
-	// Clean up any cluster-scoped RBAC resources from K03 vulnerabilities
-	r.cleanupClusterRBAC(ctx, namespace)
+	// Clean up any cluster-scoped RBAC resources from K02 vulnerabilities
+	r.cleanupClusterScopedRBAC(ctx, namespace)
 
 	// Clear verification attempts for this namespace
 	r.mu.Lock()
@@ -584,9 +584,9 @@ func (r *VulnerableLabReconciler) selectRandomIndex(arrayLength int) int {
 	return r.rng.Intn(arrayLength)
 }
 
-// cleanupOrphanedK03Resources removes orphaned RBAC resources when partial deletions occur
+// cleanupOrphanedRBACResources removes orphaned RBAC resources when partial deletions occur
 // Uses label selector to find all lab-managed resources rather than enumerating by name
-func (r *VulnerableLabReconciler) cleanupOrphanedK03Resources(ctx context.Context, namespace string) {
+func (r *VulnerableLabReconciler) cleanupOrphanedRBACResources(ctx context.Context, namespace string) {
 	logger := log.FromContext(ctx)
 
 	// Find all lab-managed RoleBindings; if any RoleBinding was deleted, clean up its orphaned Role
@@ -620,11 +620,11 @@ func (r *VulnerableLabReconciler) cleanupOrphanedK03Resources(ctx context.Contex
 	}
 }
 
-// cleanupClusterRBAC removes any cluster-scoped RBAC resources
-// K03:3 creates ClusterRoles and ClusterRoleBindings that need to be cleaned up
+// cleanupClusterScopedRBAC removes any cluster-scoped RBAC resources.
+// K02 authorization sub-issues may create ClusterRoles and ClusterRoleBindings that need cleanup.
 //
 //nolint:unparam // namespace kept for API consistency with other cleanup functions
-func (r *VulnerableLabReconciler) cleanupClusterRBAC(ctx context.Context, namespace string) {
+func (r *VulnerableLabReconciler) cleanupClusterScopedRBAC(ctx context.Context, namespace string) {
 	logger := log.FromContext(ctx)
 
 	crbList := &rbacv1.ClusterRoleBindingList{}

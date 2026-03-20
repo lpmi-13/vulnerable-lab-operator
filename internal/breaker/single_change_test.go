@@ -122,30 +122,30 @@ func TestK01MakesFocusedChanges(t *testing.T) {
 	}
 }
 
-func TestK03MakesFocusedChanges(t *testing.T) {
-	namespace := "test-k03-focused"
+func TestK02MakesFocusedChanges(t *testing.T) {
+	namespace := "test-k02-focused"
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	for i := 0; i < 20; i++ {
 		appStack := baseline.GetAppStack(namespace)
 		originalStackSize := len(appStack)
 
-		_, err := applyK03ToStack(&appStack, "api", namespace, nil, rng)
+		_, err := applyK02ToStack(&appStack, "api", namespace, nil, rng)
 		if err != nil {
-			t.Fatalf("applyK03ToStack failed: %v", err)
+			t.Fatalf("applyK02ToStack failed: %v", err)
 		}
 
 		modifiedStackSize := len(appStack)
 
-		// K03 should add new RBAC resources (1 or 2 depending on the vulnerability type)
+		// K02 should add new RBAC resources (1 or 2 depending on the vulnerability type)
 		if modifiedStackSize <= originalStackSize {
-			t.Errorf("K03 should add RBAC resources but stack size didn't increase: original=%d, modified=%d", originalStackSize, modifiedStackSize)
+			t.Errorf("K02 should add RBAC resources but stack size didn't increase: original=%d, modified=%d", originalStackSize, modifiedStackSize)
 			continue
 		}
 
 		addedResources := modifiedStackSize - originalStackSize
 		if addedResources < 1 || addedResources > 2 {
-			t.Errorf("K03 should add 1-2 RBAC resources, but added %d", addedResources)
+			t.Errorf("K02 should add 1-2 RBAC resources, but added %d", addedResources)
 			continue
 		}
 
@@ -156,18 +156,18 @@ func TestK03MakesFocusedChanges(t *testing.T) {
 			case *rbacv1.ClusterRole, *rbacv1.ClusterRoleBinding, *rbacv1.Role, *rbacv1.RoleBinding:
 				foundRBACResource = true
 			default:
-				t.Errorf("K03 added non-RBAC resource: %T", appStack[j])
+				t.Errorf("K02 added non-RBAC resource: %T", appStack[j])
 			}
 		}
 
 		if !foundRBACResource {
-			t.Errorf("K03 should add RBAC resources but none found")
+			t.Errorf("K02 should add RBAC resources but none found")
 		}
 	}
 }
 
-// detectK07NetworkPolicyVulnerability checks for K07 network policy related vulnerabilities
-func detectK07NetworkPolicyVulnerability(appStack []client.Object) (bool, string) {
+// detectK05NetworkPolicyVulnerability checks for K05 network policy related vulnerabilities
+func detectK05NetworkPolicyVulnerability(appStack []client.Object) (bool, string) {
 	allPolicies := []string{
 		"api-network-policy",
 		"postgres-network-policy",
@@ -191,41 +191,41 @@ func detectK07NetworkPolicyVulnerability(appStack []client.Object) (bool, string
 	return false, ""
 }
 
-func TestK07MakesFocusedChanges(t *testing.T) {
-	namespace := "test-k07-focused"
+func TestK05MakesFocusedChanges(t *testing.T) {
+	namespace := "test-k05-focused"
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	for i := 0; i < 20; i++ {
 		appStack := baseline.GetAppStack(namespace)
 
-		if _, err := applyK07ToStack(&appStack, "api", namespace, nil, rng); err != nil {
-			t.Fatalf("applyK07ToStack failed: %v", err)
+		if _, err := applyK05ToStack(&appStack, "api", namespace, nil, rng); err != nil {
+			t.Fatalf("applyK05ToStack failed: %v", err)
 		}
 
-		if found, msg := detectK07NetworkPolicyVulnerability(appStack); !found {
-			t.Errorf("K07 iteration %d: No network vulnerability detected", i)
+		if found, msg := detectK05NetworkPolicyVulnerability(appStack); !found {
+			t.Errorf("K05 iteration %d: No network vulnerability detected", i)
 		} else {
-			t.Logf("K07 iteration %d: %s", i, msg)
+			t.Logf("K05 iteration %d: %s", i, msg)
 		}
 	}
 }
 
-func TestK08MakesFocusedChanges(t *testing.T) {
-	namespace := "test-k08-focused"
+func TestK03MakesFocusedChanges(t *testing.T) {
+	namespace := "test-k03-focused"
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	for i := 0; i < 20; i++ {
 		appStack := baseline.GetAppStack(namespace)
 		originalStackSize := len(appStack)
 
-		if _, err := applyK08ToStack(&appStack, "api", namespace, nil, rng); err != nil {
-			t.Fatalf("applyK08ToStack failed: %v", err)
+		if _, err := applyK03ToStack(&appStack, "api", namespace, nil, rng); err != nil {
+			t.Fatalf("applyK03ToStack failed: %v", err)
 		}
 
 		if len(appStack) <= originalStackSize {
-			t.Errorf("K08 iteration %d: Expected ConfigMap to be added to stack", i)
+			t.Errorf("K03 iteration %d: Expected ConfigMap to be added to stack", i)
 		} else {
-			t.Logf("K08 iteration %d: Applied secrets in ConfigMap (added %d resources)", i, len(appStack)-originalStackSize)
+			t.Logf("K03 iteration %d: Applied secrets in ConfigMap (added %d resources)", i, len(appStack)-originalStackSize)
 		}
 	}
 }
@@ -335,7 +335,7 @@ func TestK01SubIssueSelection(t *testing.T) {
 }
 
 //nolint:gocyclo // Test function needs to check multiple vulnerability types
-func TestK03SubIssueSelection(t *testing.T) {
+func TestK02SubIssueSelection(t *testing.T) {
 	tests := []struct {
 		name     string
 		subIssue int
@@ -455,12 +455,12 @@ func TestK03SubIssueSelection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			namespace := "test-k03-deterministic"
+			namespace := "test-k02-deterministic"
 			appStack := baseline.GetAppStack(namespace)
 
-			_, err := applyK03ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
+			_, err := applyK02ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
 			if err != nil {
-				t.Fatalf("applyK03ToStack failed: %v", err)
+				t.Fatalf("applyK02ToStack failed: %v", err)
 			}
 
 			tt.verify(t, appStack, namespace)
@@ -468,7 +468,7 @@ func TestK03SubIssueSelection(t *testing.T) {
 	}
 }
 
-func TestK07SubIssueSelection(t *testing.T) {
+func TestK05SubIssueSelection(t *testing.T) {
 	hasPolicies := func(t *testing.T, stack []client.Object) map[string]bool {
 		t.Helper()
 		present := make(map[string]bool)
@@ -502,12 +502,12 @@ func TestK07SubIssueSelection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			namespace := "test-k07-deterministic"
+			namespace := "test-k05-deterministic"
 			appStack := baseline.GetAppStack(namespace)
 
-			_, err := applyK07ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
+			_, err := applyK05ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
 			if err != nil {
-				t.Fatalf("applyK07ToStack failed: %v", err)
+				t.Fatalf("applyK05ToStack failed: %v", err)
 			}
 
 			tt.verify(t, appStack)
@@ -515,7 +515,7 @@ func TestK07SubIssueSelection(t *testing.T) {
 	}
 }
 
-func TestK08SubIssueSelection(t *testing.T) {
+func TestK03SubIssueSelection(t *testing.T) {
 	tests := []struct {
 		name     string
 		subIssue int
@@ -556,12 +556,12 @@ func TestK08SubIssueSelection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			namespace := "test-k08-deterministic"
+			namespace := "test-k03-deterministic"
 			appStack := baseline.GetAppStack(namespace)
 
-			_, err := applyK08ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
+			_, err := applyK03ToStack(&appStack, "api", namespace, &tt.subIssue, nil)
 			if err != nil {
-				t.Fatalf("applyK08ToStack failed: %v", err)
+				t.Fatalf("applyK03ToStack failed: %v", err)
 			}
 
 			dep := findDeployment(appStack)
@@ -605,6 +605,54 @@ func TestK01TargetNotFound(t *testing.T) {
 	}
 }
 
+func TestK02SubIssueOutOfRange(t *testing.T) {
+	namespace := "test-k02-errors"
+	appStack := baseline.GetAppStack(namespace)
+
+	// Test subIssue -1
+	invalidSub := -1
+	_, err := applyK02ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue -1")
+	}
+
+	// Test subIssue 7 (out of range for K02 which has 0-4)
+	invalidSub = 7
+	_, err = applyK02ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue 7")
+	}
+}
+
+func TestK02TargetNotFound(t *testing.T) {
+	namespace := "test-k02-errors"
+	appStack := baseline.GetAppStack(namespace)
+
+	_, err := applyK02ToStack(&appStack, "nonexistent-deployment", namespace, nil, nil)
+	if err == nil {
+		t.Error("expected error for nonexistent deployment")
+	}
+}
+
+func TestK05SubIssueOutOfRange(t *testing.T) {
+	namespace := "test-k05-errors"
+	appStack := baseline.GetAppStack(namespace)
+
+	// Test subIssue -1
+	invalidSub := -1
+	_, err := applyK05ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue -1")
+	}
+
+	// Test subIssue 1 (out of range for K05 which has only 0)
+	invalidSub = 1
+	_, err = applyK05ToStack(&appStack, "api", namespace, &invalidSub, nil)
+	if err == nil {
+		t.Error("expected error for subIssue 1")
+	}
+}
+
 func TestK03SubIssueOutOfRange(t *testing.T) {
 	namespace := "test-k03-errors"
 	appStack := baseline.GetAppStack(namespace)
@@ -616,57 +664,9 @@ func TestK03SubIssueOutOfRange(t *testing.T) {
 		t.Error("expected error for subIssue -1")
 	}
 
-	// Test subIssue 7 (out of range for K03 which has 0-6)
-	invalidSub = 7
+	// Test subIssue 1 (out of range for K03 which has only 0)
+	invalidSub = 1
 	_, err = applyK03ToStack(&appStack, "api", namespace, &invalidSub, nil)
-	if err == nil {
-		t.Error("expected error for subIssue 7")
-	}
-}
-
-func TestK03TargetNotFound(t *testing.T) {
-	namespace := "test-k03-errors"
-	appStack := baseline.GetAppStack(namespace)
-
-	_, err := applyK03ToStack(&appStack, "nonexistent-deployment", namespace, nil, nil)
-	if err == nil {
-		t.Error("expected error for nonexistent deployment")
-	}
-}
-
-func TestK07SubIssueOutOfRange(t *testing.T) {
-	namespace := "test-k07-errors"
-	appStack := baseline.GetAppStack(namespace)
-
-	// Test subIssue -1
-	invalidSub := -1
-	_, err := applyK07ToStack(&appStack, "api", namespace, &invalidSub, nil)
-	if err == nil {
-		t.Error("expected error for subIssue -1")
-	}
-
-	// Test subIssue 1 (out of range for K07 which has only 0)
-	invalidSub = 1
-	_, err = applyK07ToStack(&appStack, "api", namespace, &invalidSub, nil)
-	if err == nil {
-		t.Error("expected error for subIssue 1")
-	}
-}
-
-func TestK08SubIssueOutOfRange(t *testing.T) {
-	namespace := "test-k08-errors"
-	appStack := baseline.GetAppStack(namespace)
-
-	// Test subIssue -1
-	invalidSub := -1
-	_, err := applyK08ToStack(&appStack, "api", namespace, &invalidSub, nil)
-	if err == nil {
-		t.Error("expected error for subIssue -1")
-	}
-
-	// Test subIssue 1 (out of range for K08 which has only 0)
-	invalidSub = 1
-	_, err = applyK08ToStack(&appStack, "api", namespace, &invalidSub, nil)
 	if err == nil {
 		t.Error("expected error for subIssue 1")
 	}
@@ -699,23 +699,23 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 			name string
 			fn   func(*[]client.Object, string, string) error
 		}{
+			{"K02", func(stack *[]client.Object, target, ns string) error {
+				_, err := applyK02ToStack(stack, target, ns, nil, rng)
+				return err
+			}},
 			{"K03", func(stack *[]client.Object, target, ns string) error {
 				_, err := applyK03ToStack(stack, target, ns, nil, rng)
 				return err
 			}},
-			{"K08", func(stack *[]client.Object, target, ns string) error {
-				_, err := applyK08ToStack(stack, target, ns, nil, rng)
-				return err
-			}},
 		}
 
-		// K07 doesn't add resources, so it uses the original signature
-		k07Vulns := []struct {
+		// K05 doesn't add resources, so it uses the original signature
+		k05Vulns := []struct {
 			name string
 			fn   func(*[]client.Object, string, string) error
 		}{
-			{"K07", func(stack *[]client.Object, target, ns string) error {
-				_, err := applyK07ToStack(stack, target, ns, nil, rng)
+			{"K05", func(stack *[]client.Object, target, ns string) error {
+				_, err := applyK05ToStack(stack, target, ns, nil, rng)
 				return err
 			}},
 		}
@@ -728,7 +728,7 @@ func TestAllVulnerabilitiesApplySuccessfully(t *testing.T) {
 			}
 		}
 
-		for _, vuln := range k07Vulns {
+		for _, vuln := range k05Vulns {
 			testStack := baseline.GetAppStack(namespace)
 			err := vuln.fn(&testStack, target, namespace)
 			if err != nil {

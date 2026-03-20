@@ -22,13 +22,13 @@ EXPECTED_CONTROL["k01-sub1.sh"]="C-0013"  # Non-root containers (RunAsNonRoot)
 EXPECTED_CONTROL["k01-sub2.sh"]="C-0038"  # Host PID / IPC privileges
 EXPECTED_CONTROL["k01-sub3.sh"]="C-0041"  # HostNetwork access
 EXPECTED_CONTROL["k01-sub4.sh"]="C-0048"  # HostPath mount
-EXPECTED_CONTROL["k03-sub0.sh"]="C-0015"  # List Kubernetes secrets
-EXPECTED_CONTROL["k03-sub1.sh"]="C-0188"  # Create pods
-EXPECTED_CONTROL["k03-sub2.sh"]="C-0007"  # Delete Kubernetes resources
-EXPECTED_CONTROL["k03-sub3.sh"]="C-0063"  # Portforwarding privileges
-EXPECTED_CONTROL["k03-sub4.sh"]="C-0002"  # Exec into container
-EXPECTED_CONTROL["k07-sub0.sh"]="C-0260"  # Missing network policy
-EXPECTED_CONTROL["k08-sub0.sh"]="C-0012"  # Applications credentials in configuration files
+EXPECTED_CONTROL["k02-sub0.sh"]="C-0015"  # List Kubernetes secrets
+EXPECTED_CONTROL["k02-sub1.sh"]="C-0188"  # Create pods
+EXPECTED_CONTROL["k02-sub2.sh"]="C-0007"  # Delete Kubernetes resources
+EXPECTED_CONTROL["k02-sub3.sh"]="C-0063"  # Portforwarding privileges
+EXPECTED_CONTROL["k02-sub4.sh"]="C-0002"  # Exec into container
+EXPECTED_CONTROL["k03-sub0.sh"]="C-0012"  # Applications credentials in configuration files
+EXPECTED_CONTROL["k05-sub0.sh"]="C-0260"  # Missing network policy
 
 echo "=== KUBESCAPE CONTROL DISCOVERY ===" | tee "$RESULTS_FILE"
 echo "Started: $(date)" | tee -a "$RESULTS_FILE"
@@ -36,12 +36,16 @@ echo "Objective: each script triggers exactly 1 unique kubescape control with co
 echo "" | tee -a "$RESULTS_FILE"
 
 # Collect all k*-sub*.sh scripts, sorted
-SCRIPTS=()
+ALL_SCRIPTS=()
 while IFS= read -r -d '' f; do
-  SCRIPTS+=("$(basename "$f")")
+  ALL_SCRIPTS+=("$(basename "$f")")
 done < <(find "$SCRIPT_DIR" -maxdepth 1 -name 'k*-sub*.sh' -print0 | sort -z)
 
-echo "Found ${#SCRIPTS[@]} sub-issue scripts: ${SCRIPTS[*]}" | tee -a "$RESULTS_FILE"
+echo "Found ${#ALL_SCRIPTS[@]} sub-issue scripts: ${ALL_SCRIPTS[*]}" | tee -a "$RESULTS_FILE"
+
+SCRIPTS=("${ALL_SCRIPTS[@]}")
+
+echo "Kubescape-mapped scripts: ${SCRIPTS[*]}" | tee -a "$RESULTS_FILE"
 
 # Validate that we have all expected scripts and no unexpected ones
 EXPECTED_SCRIPTS=("${!EXPECTED_CONTROL[@]}")
@@ -67,8 +71,8 @@ for SCRIPT_NAME in "${SCRIPTS[@]}"; do
 
   echo "--- Processing $SCRIPT_NAME (expected: $EXPECTED) ---" | tee -a "$RESULTS_FILE"
 
-  # Full cluster reset: delete VulnerableLab and all RBAC resources created by K03
-  # (K03 Role/RoleBinding/ClusterRoleBinding resources persist after VulnerableLab deletion
+  # Full cluster reset: delete VulnerableLab and all RBAC resources created by K02
+  # (K02 Role/RoleBinding/ClusterRoleBinding resources persist after VulnerableLab deletion
   # since they are not part of the baseline stack cleaned up by the controller)
   echo "  Resetting cluster state..." | tee -a "$RESULTS_FILE"
   kubectl delete vulnerablelab test-lab --ignore-not-found --wait=true 2>&1 | tee -a "$RESULTS_FILE" || true

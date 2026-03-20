@@ -23,11 +23,11 @@ import (
 // VulnerableLabSpec defines the desired state of VulnerableLab.
 type VulnerableLabSpec struct {
 	// +optional
-	// +kubebuilder:validation:Enum=K01;K03;K07;K08;random
+	// +kubebuilder:validation:Enum=K01;K02;K03;K05;random
 	Vulnerability string `json:"vulnerability,omitempty"`
 	// +optional
 	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=6
+	// +kubebuilder:validation:Maximum=4
 	SubIssue *int `json:"subIssue,omitempty"`
 }
 

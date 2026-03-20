@@ -60,36 +60,33 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 			return 0, fmt.Errorf("failed to apply K01 vulnerability: %w", err)
 		}
 		chosenSubIssue = sub
-	case "K03":
-		// Remove lab-managed RBAC artifacts from prior K03 runs so each sub-issue
+	case "K02":
+		// Remove lab-managed RBAC artifacts from prior K02 runs so each sub-issue
 		// starts from a clean slate and introduces exactly one vulnerable binding.
 		if err := cleanupLabManagedRBAC(ctx, c, namespace); err != nil {
-			return 0, fmt.Errorf("failed to clean previous K03 RBAC resources: %w", err)
+			return 0, fmt.Errorf("failed to clean previous K02 RBAC resources: %w", err)
 		}
 
+		sub, err := applyK02ToStack(&appStack, targetResource, namespace, subIssue, rng)
+		if err != nil {
+			return 0, fmt.Errorf("failed to apply K02 vulnerability: %w", err)
+		}
+		chosenSubIssue = sub
+	case "K05":
+		sub, err := applyK05ToStack(&appStack, targetResource, namespace, subIssue, rng)
+		if err != nil {
+			return 0, fmt.Errorf("failed to apply K05 vulnerability: %w", err)
+		}
+		chosenSubIssue = sub
+	case "K03":
 		sub, err := applyK03ToStack(&appStack, targetResource, namespace, subIssue, rng)
 		if err != nil {
 			return 0, fmt.Errorf("failed to apply K03 vulnerability: %w", err)
 		}
 		chosenSubIssue = sub
-	// K04 (Lack of Centralized Policy Enforcement) and K05 (Inadequate Logging and Monitoring)
-	// are not implemented as they require external infrastructure (OPA Gatekeeper, SIEM systems)
-	// rather than resource-level misconfigurations that can be demonstrated in this lab environment
-	case "K07":
-		sub, err := applyK07ToStack(&appStack, targetResource, namespace, subIssue, rng)
-		if err != nil {
-			return 0, fmt.Errorf("failed to apply K07 vulnerability: %w", err)
-		}
-		chosenSubIssue = sub
-	case "K08":
-		sub, err := applyK08ToStack(&appStack, targetResource, namespace, subIssue, rng)
-		if err != nil {
-			return 0, fmt.Errorf("failed to apply K08 vulnerability: %w", err)
-		}
-		chosenSubIssue = sub
-	// K09 (Misconfigured Cluster Components) and K10 (Outdated and Vulnerable Kubernetes Components)
-	// are not implemented as they require cluster-level administrative access and would affect
-	// the entire cluster rather than being contained within individual lab namespaces
+	// K06 (Overly Exposed Kubernetes Components), K07 (Misconfigured And Vulnerable Cluster Components),
+	// and K08 (Cluster-To-Cloud Lateral Movement) are not yet implemented because they require
+	// cluster-level or cloud-provider changes beyond this namespace-scoped lab model.
 	default:
 		return 0, fmt.Errorf("unknown vulnerability ID: %s", vulnerabilityID)
 	}
@@ -120,7 +117,7 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 	}
 
 	// Delete any baseline resources that were intentionally removed by the vulnerability function.
-	// For example, K07:0 removes NetworkPolicies from the stack to demonstrate missing network
+	// For example, K05:0 removes NetworkPolicies from the stack to demonstrate missing network
 	// controls — those resources must also be deleted from the cluster if they already exist.
 	modifiedKeys := make(map[string]struct{}, len(appStack))
 	for _, obj := range appStack {
@@ -144,7 +141,7 @@ func BreakCluster(ctx context.Context, c client.Client, vulnerabilityID string, 
 		}
 	}
 
-	// Clean up lab-managed ConfigMaps from previous vulnerability runs (e.g., K08)
+	// Clean up lab-managed ConfigMaps from previous vulnerability runs (e.g., K03)
 	cmList := &corev1.ConfigMapList{}
 	if err := c.List(ctx, cmList, client.InNamespace(namespace),
 		client.MatchingLabels{"lab.security.lab/managed-by": "vulnerable-lab"}); err == nil {
@@ -334,11 +331,11 @@ func applyK01ToStack(appStack []client.Object, targetDeployment string, subIssue
 	return 0, fmt.Errorf("target deployment %s not found in baseline stack", targetDeployment)
 }
 
-// applyK03ToStack modifies the baseline stack to apply overly permissive RBAC configurations
+// applyK02ToStack modifies the baseline stack to apply overly permissive authorization configurations.
 // Sub-issues: 0=C-0015(secrets list), 1=C-0188(pod create), 2=C-0007(delete),
 //
 //	3=C-0063(portforward), 4=C-0002(exec)
-func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
+func applyK02ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
 	// Find and modify the target deployment within the stack
 	for _, obj := range *appStack {
 		if dep, ok := obj.(*appsv1.Deployment); ok && dep.Name == targetDeployment {
@@ -346,11 +343,11 @@ func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 			var vulnType int
 			if subIssue != nil {
 				if *subIssue < 0 || *subIssue > 4 {
-					return 0, fmt.Errorf("subIssue %d out of range for K03 (valid: 0-4)", *subIssue)
+					return 0, fmt.Errorf("subIssue %d out of range for K02 (valid: 0-4)", *subIssue)
 				}
 				vulnType = *subIssue
 			} else {
-				// Randomly choose one of five K03 vulnerability types
+				// Randomly choose one of five K02 vulnerability types
 				vulnType = rng.Intn(5)
 			}
 
@@ -611,12 +608,12 @@ func createPodCreationRBAC(appStack *[]client.Object, namespace string) {
 	*appStack = append(*appStack, role, binding)
 }
 
-// applyK07ToStack modifies the baseline stack to demonstrate missing network segmentation controls
+// applyK05ToStack modifies the baseline stack to demonstrate missing network segmentation controls.
 // Sub-issue 0: Remove user-service network policy (C-0260, count=1)
 //
 //nolint:unparam // namespace kept for consistency with other applyKXX functions
-func applyK07ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
-	// K07 vulnerabilities are about MISSING network controls rather than broken ones
+func applyK05ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
+	// K05 vulnerabilities are about missing network controls rather than broken ones.
 	// Note: targetDeployment parameter kept for API consistency with other vulnerability functions
 	_ = targetDeployment
 
@@ -624,11 +621,11 @@ func applyK07ToStack(appStack *[]client.Object, targetDeployment, namespace stri
 	var vulnType int
 	if subIssue != nil {
 		if *subIssue < 0 || *subIssue > 0 {
-			return 0, fmt.Errorf("subIssue %d out of range for K07 (valid: 0)", *subIssue)
+			return 0, fmt.Errorf("subIssue %d out of range for K05 (valid: 0)", *subIssue)
 		}
 		vulnType = *subIssue
 	} else {
-		// Only one K07 vulnerability type
+		// Only one K05 vulnerability type
 		vulnType = 0
 	}
 
@@ -658,20 +655,20 @@ func removeNamedNetworkPolicies(appStack *[]client.Object, names ...string) {
 	*appStack = updatedStack
 }
 
-// applyK08ToStack modifies the baseline stack to apply secrets management vulnerabilities
+// applyK03ToStack modifies the baseline stack to apply secrets management vulnerabilities.
 // Sub-issue 0: Secret data in ConfigMaps (C-0012)
 //
 //nolint:unparam // rng kept for API consistency with other applyKXX functions
-func applyK08ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
+func applyK03ToStack(appStack *[]client.Object, targetDeployment, namespace string, subIssue *int, rng *rand.Rand) (int, error) {
 	// Choose vulnerability type based on subIssue parameter or randomly
 	var vulnType int
 	if subIssue != nil {
 		if *subIssue < 0 || *subIssue > 0 {
-			return 0, fmt.Errorf("subIssue %d out of range for K08 (valid: 0)", *subIssue)
+			return 0, fmt.Errorf("subIssue %d out of range for K03 (valid: 0)", *subIssue)
 		}
 		vulnType = *subIssue
 	} else {
-		// Only one K08 vulnerability type
+		// Only one K03 vulnerability type
 		vulnType = 0
 	}
 

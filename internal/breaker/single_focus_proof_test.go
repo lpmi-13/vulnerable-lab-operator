@@ -9,7 +9,7 @@ import (
 )
 
 // TestSingleFocusProof proves that each vulnerability category applies exactly one type of misconfiguration
-// by showing that each function executes successfully and makes focused changes
+// by showing that each function executes successfully and makes focused changes.
 func TestSingleFocusProof(t *testing.T) {
 	namespace := "test-single-focus"
 	target := apiDeploymentName
@@ -29,8 +29,20 @@ func TestSingleFocusProof(t *testing.T) {
 		t.Log("✓ K01 applies exactly ONE random security context vulnerability (privileged, root user, hostPID/IPC, hostNetwork, or hostPath)")
 	})
 
-	// Test K03 - Overly Permissive RBAC
-	t.Run("K03_Single_RBAC_Vulnerability", func(t *testing.T) {
+	// Test K02 - Overly Permissive Authorization
+	t.Run("K02_Single_RBAC_Vulnerability", func(t *testing.T) {
+		for i := 0; i < 10; i++ {
+			appStack := baseline.GetAppStack(namespace)
+			_, err := applyK02ToStack(&appStack, target, namespace, nil, rng)
+			if err != nil {
+				t.Fatalf("K02 iteration %d failed: %v", i, err)
+			}
+		}
+		t.Log("✓ K02 applies exactly ONE random authorization/RBAC vulnerability (secrets access, pod creation, delete, portforward, or exec)")
+	})
+
+	// Test K03 - Secrets Management
+	t.Run("K03_Single_Secrets_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
 			_, err := applyK03ToStack(&appStack, target, namespace, nil, rng)
@@ -38,95 +50,85 @@ func TestSingleFocusProof(t *testing.T) {
 				t.Fatalf("K03 iteration %d failed: %v", i, err)
 			}
 		}
-		t.Log("✓ K03 applies exactly ONE random RBAC vulnerability (secrets access, pod creation, delete, portforward, or exec)")
+		t.Log("✓ K03 applies exactly ONE secrets vulnerability (secrets in ConfigMaps)")
 	})
 
-	// Test K07 - Network Segmentation
-	t.Run("K07_Single_Network_Vulnerability", func(t *testing.T) {
+	// Test K05 - Network Segmentation
+	t.Run("K05_Single_Network_Vulnerability", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			appStack := baseline.GetAppStack(namespace)
-			_, err := applyK07ToStack(&appStack, target, namespace, nil, rng)
+			_, err := applyK05ToStack(&appStack, target, namespace, nil, rng)
 			if err != nil {
-				t.Fatalf("K07 iteration %d failed: %v", i, err)
+				t.Fatalf("K05 iteration %d failed: %v", i, err)
 			}
 		}
-		t.Log("✓ K07 applies exactly ONE network vulnerability (user-service network policy removed)")
-	})
-
-	// Test K08 - Secrets Management
-	t.Run("K08_Single_Secrets_Vulnerability", func(t *testing.T) {
-		for i := 0; i < 10; i++ {
-			appStack := baseline.GetAppStack(namespace)
-			_, err := applyK08ToStack(&appStack, target, namespace, nil, rng)
-			if err != nil {
-				t.Fatalf("K08 iteration %d failed: %v", i, err)
-			}
-		}
-		t.Log("✓ K08 applies exactly ONE secrets vulnerability (secrets in ConfigMaps)")
+		t.Log("✓ K05 applies exactly ONE network vulnerability (user-service network policy removed)")
 	})
 
 	t.Log("\n=== PROOF COMPLETE ===")
-	t.Log("✅ Each vulnerability category (K01, K03, K07, K08) applies exactly ONE focused misconfiguration")
+	t.Log("✅ Each vulnerability category (K01, K02, K03, K05) applies exactly ONE focused misconfiguration")
 	t.Log("✅ This enables single-fix testing where learners need to identify and remediate exactly one issue")
 	t.Log("✅ Random selection within each category provides varied learning experiences")
 }
 
-// TestRandomizationWorks proves that each vulnerability function produces different results across runs
+// TestRandomizationWorks proves that each vulnerability function behaves correctly across repeated runs.
 func TestRandomizationWorks(t *testing.T) {
 	namespace := "test-randomization"
 	target := apiDeploymentName
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	t.Log("=== Testing Randomization Within Categories ===")
-
-	// For each vulnerability type, run it multiple times and verify we get different results
-	// (This is statistical, so we run enough iterations to be confident)
+	t.Log("=== Testing Repeated Vulnerability Application ===")
 
 	vulnerabilities := []struct {
-		name   string
-		testFn func() error
+		name          string
+		deterministic bool
+		testFn        func() error
 	}{
-		{"K01", func() error {
+		{"K01", false, func() error {
 			appStack := baseline.GetAppStack(namespace)
 			_, err := applyK01ToStack(appStack, target, nil, rng)
 			return err
 		}},
-		{"K03", func() error {
+		{"K02", false, func() error {
+			appStack := baseline.GetAppStack(namespace)
+			_, err := applyK02ToStack(&appStack, target, namespace, nil, rng)
+			return err
+		}},
+		{"K03", true, func() error {
 			appStack := baseline.GetAppStack(namespace)
 			_, err := applyK03ToStack(&appStack, target, namespace, nil, rng)
 			return err
 		}},
-		{"K07", func() error {
+		{"K05", true, func() error {
 			appStack := baseline.GetAppStack(namespace)
-			_, err := applyK07ToStack(&appStack, target, namespace, nil, rng)
-			return err
-		}},
-		{"K08", func() error {
-			appStack := baseline.GetAppStack(namespace)
-			_, err := applyK08ToStack(&appStack, target, namespace, nil, rng)
+			_, err := applyK05ToStack(&appStack, target, namespace, nil, rng)
 			return err
 		}},
 	}
 
 	for _, vuln := range vulnerabilities {
-		t.Run(vuln.name+"_Randomization", func(t *testing.T) {
+		t.Run(vuln.name+"_RepeatedApplication", func(t *testing.T) {
 			successCount := 0
 			for i := 0; i < 20; i++ {
-				err := vuln.testFn()
-				if err == nil {
+				if err := vuln.testFn(); err == nil {
 					successCount++
 				}
 			}
 
-			if successCount < 15 { // Allow some failures due to randomization edge cases
-				t.Errorf("%s randomization test had too many failures: %d/20 succeeded", vuln.name, successCount)
+			if successCount < 15 {
+				t.Errorf("%s repeated application test had too many failures: %d/20 succeeded", vuln.name, successCount)
+				return
+			}
+
+			if vuln.deterministic {
+				t.Logf("✓ %s repeated application successful: %d/20 iterations succeeded", vuln.name, successCount)
 			} else {
 				t.Logf("✓ %s randomization successful: %d/20 iterations succeeded", vuln.name, successCount)
 			}
 		})
 	}
 
-	t.Log("\n=== RANDOMIZATION PROOF COMPLETE ===")
-	t.Log("✅ Each vulnerability category uses true randomization to select one of multiple vulnerability types")
-	t.Log("✅ This ensures varied learning experiences across different lab sessions")
+	t.Log("\n=== REPEATED APPLICATION PROOF COMPLETE ===")
+	t.Log("✅ K01 and K02 randomize across multiple sub-issues")
+	t.Log("✅ K03 and K05 remain deterministic single-issue exercises")
 }

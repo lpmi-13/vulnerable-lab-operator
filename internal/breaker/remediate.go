@@ -21,18 +21,15 @@ func CheckRemediation(ctx context.Context, c client.Client, vulnerabilityID, tar
 	switch vulnerabilityID {
 	case "K01":
 		return checkK01(ctx, c, targetResource, namespace, subIssue)
+	case "K02":
+		return checkK02(ctx, c, targetResource, namespace, subIssue)
 	case "K03":
 		return checkK03(ctx, c, targetResource, namespace, subIssue)
-	// K04 (Lack of Centralized Policy Enforcement) and K05 (Inadequate Logging and Monitoring)
-	// are not implemented as they require external infrastructure (OPA Gatekeeper, SIEM systems)
-	// rather than resource-level misconfigurations that can be demonstrated in this lab environment
-	case "K07":
-		return checkK07(ctx, c, targetResource, namespace, subIssue)
-	case "K08":
-		return checkK08(ctx, c, targetResource, namespace, subIssue)
-	// K09 (Misconfigured Cluster Components) and K10 (Outdated and Vulnerable Kubernetes Components)
-	// are not implemented as they require cluster-level administrative access and would affect
-	// the entire cluster rather than being contained within individual lab namespaces
+	case "K05":
+		return checkK05(ctx, c, targetResource, namespace, subIssue)
+	// K06 (Overly Exposed Kubernetes Components), K07 (Misconfigured And Vulnerable Cluster Components),
+	// and K08 (Cluster-To-Cloud Lateral Movement) are not yet implemented because they require
+	// cluster-level or cloud-provider changes beyond this namespace-scoped lab model.
 	default:
 		return false, fmt.Errorf("unknown vulnerability ID for remediation check: %s", vulnerabilityID)
 	}
@@ -131,13 +128,13 @@ func checkK01All(ctx context.Context, dep *appsv1.Deployment, targetDeployment s
 	return true, nil
 }
 
-// checkK03 verifies if the RBAC vulnerability has been fixed
+// checkK02 verifies if the authorization/RBAC vulnerability has been fixed.
 // Sub-issues: 0=C-0015(secrets-access), 1=C-0188(pod-create), 2=C-0007(delete),
 //
 //	3=C-0063(portforward), 4=C-0002(exec)
 //
 //nolint:gocyclo // Each switch case checks one isolated RBAC resource; complexity is intentional
-func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace string, subIssue *int) (bool, error) {
+func checkK02(ctx context.Context, c client.Client, targetDeployment, namespace string, subIssue *int) (bool, error) {
 	logger := log.FromContext(ctx)
 
 	// If a specific sub-issue was applied, check only that one
@@ -146,14 +143,14 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 		case 0: // Secrets access role + binding
 			role := &rbacv1.Role{}
 			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-secrets-access-role", namespace), Namespace: namespace}, role); err == nil {
-				logger.Info("K03 vulnerability still active: secrets access role exists", "target", targetDeployment)
+				logger.Info("K02 vulnerability still active: secrets access role exists", "target", targetDeployment)
 				return false, nil
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check secrets access role: %w", err)
 			}
 			binding := &rbacv1.RoleBinding{}
 			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-secrets-access-binding", namespace), Namespace: namespace}, binding); err == nil {
-				logger.Info("K03 vulnerability still active: secrets access binding exists", "target", targetDeployment)
+				logger.Info("K02 vulnerability still active: secrets access binding exists", "target", targetDeployment)
 				return false, nil
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check secrets access binding: %w", err)
@@ -161,14 +158,14 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 		case 1: // Pod creation role + binding
 			role := &rbacv1.Role{}
 			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-pod-create-role", namespace), Namespace: namespace}, role); err == nil {
-				logger.Info("K03 vulnerability still active: pod-create role exists", "target", targetDeployment)
+				logger.Info("K02 vulnerability still active: pod-create role exists", "target", targetDeployment)
 				return false, nil
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check pod-create role: %w", err)
 			}
 			binding := &rbacv1.RoleBinding{}
 			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-pod-create-binding", namespace), Namespace: namespace}, binding); err == nil {
-				logger.Info("K03 vulnerability still active: pod-create binding exists", "target", targetDeployment)
+				logger.Info("K02 vulnerability still active: pod-create binding exists", "target", targetDeployment)
 				return false, nil
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check pod-create binding: %w", err)
@@ -176,14 +173,14 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 		case 2: // Delete capabilities role + binding
 			role := &rbacv1.Role{}
 			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-delete-role", namespace), Namespace: namespace}, role); err == nil {
-				logger.Info("K03 vulnerability still active: delete role exists", "target", targetDeployment)
+				logger.Info("K02 vulnerability still active: delete role exists", "target", targetDeployment)
 				return false, nil
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check delete role: %w", err)
 			}
 			binding := &rbacv1.RoleBinding{}
 			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-delete-binding", namespace), Namespace: namespace}, binding); err == nil {
-				logger.Info("K03 vulnerability still active: delete binding exists", "target", targetDeployment)
+				logger.Info("K02 vulnerability still active: delete binding exists", "target", targetDeployment)
 				return false, nil
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check delete binding: %w", err)
@@ -191,14 +188,14 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 		case 3: // Portforward role + binding
 			role := &rbacv1.Role{}
 			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-portforward-role", namespace), Namespace: namespace}, role); err == nil {
-				logger.Info("K03 vulnerability still active: portforward role exists", "target", targetDeployment)
+				logger.Info("K02 vulnerability still active: portforward role exists", "target", targetDeployment)
 				return false, nil
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check portforward role: %w", err)
 			}
 			binding := &rbacv1.RoleBinding{}
 			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-portforward-binding", namespace), Namespace: namespace}, binding); err == nil {
-				logger.Info("K03 vulnerability still active: portforward binding exists", "target", targetDeployment)
+				logger.Info("K02 vulnerability still active: portforward binding exists", "target", targetDeployment)
 				return false, nil
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check portforward binding: %w", err)
@@ -206,20 +203,20 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 		case 4: // Exec role + binding
 			role := &rbacv1.Role{}
 			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-exec-role", namespace), Namespace: namespace}, role); err == nil {
-				logger.Info("K03 vulnerability still active: exec role exists", "target", targetDeployment)
+				logger.Info("K02 vulnerability still active: exec role exists", "target", targetDeployment)
 				return false, nil
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check exec role: %w", err)
 			}
 			binding := &rbacv1.RoleBinding{}
 			if err := c.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-exec-binding", namespace), Namespace: namespace}, binding); err == nil {
-				logger.Info("K03 vulnerability still active: exec binding exists", "target", targetDeployment)
+				logger.Info("K02 vulnerability still active: exec binding exists", "target", targetDeployment)
 				return false, nil
 			} else if !errors.IsNotFound(err) {
 				return false, fmt.Errorf("failed to check exec binding: %w", err)
 			}
 		}
-		logger.Info("K03 vulnerability remediated", "target", targetDeployment, "subIssue", *subIssue)
+		logger.Info("K02 vulnerability remediated", "target", targetDeployment, "subIssue", *subIssue)
 		return true, nil
 	}
 
@@ -230,7 +227,7 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 		return false, fmt.Errorf("failed to list lab-managed Roles: %w", err)
 	}
 	if len(roleList.Items) > 0 {
-		logger.Info("K03 vulnerability still active: lab-managed roles still present", "target", targetDeployment, "count", len(roleList.Items))
+		logger.Info("K02 vulnerability still active: lab-managed roles still present", "target", targetDeployment, "count", len(roleList.Items))
 		return false, nil
 	}
 
@@ -240,7 +237,7 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 		return false, fmt.Errorf("failed to list lab-managed RoleBindings: %w", err)
 	}
 	if len(rbList.Items) > 0 {
-		logger.Info("K03 vulnerability still active: lab-managed rolebindings still present", "target", targetDeployment, "count", len(rbList.Items))
+		logger.Info("K02 vulnerability still active: lab-managed rolebindings still present", "target", targetDeployment, "count", len(rbList.Items))
 		return false, nil
 	}
 
@@ -251,34 +248,34 @@ func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace 
 		return false, fmt.Errorf("failed to list lab-managed ClusterRoleBindings: %w", err)
 	}
 	if len(crbList.Items) > 0 {
-		logger.Info("K03 vulnerability still active: lab-managed ClusterRoleBindings still present", "target", targetDeployment)
+		logger.Info("K02 vulnerability still active: lab-managed ClusterRoleBindings still present", "target", targetDeployment)
 		return false, nil
 	}
 
-	logger.Info("K03 vulnerability remediated: overpermissive RBAC resources removed", "target", targetDeployment)
+	logger.Info("K02 vulnerability remediated: overpermissive authorization resources removed", "target", targetDeployment)
 	return true, nil
 }
 
-// checkK07 verifies if the network segmentation vulnerability has been addressed
-func checkK07(ctx context.Context, c client.Client, targetDeployment, namespace string, subIssue *int) (bool, error) {
+// checkK05 verifies if the network segmentation vulnerability has been addressed.
+func checkK05(ctx context.Context, c client.Client, targetDeployment, namespace string, subIssue *int) (bool, error) {
 	logger := log.FromContext(ctx)
 
 	// Only one sub-issue: user-service-network-policy removal
 	netpol := &networkingv1.NetworkPolicy{}
 	if err := c.Get(ctx, client.ObjectKey{Name: "user-service-network-policy", Namespace: namespace}, netpol); errors.IsNotFound(err) {
-		logger.Info("K07 vulnerability still active: user-service network policy missing", "target", targetDeployment)
+		logger.Info("K05 vulnerability still active: user-service network policy missing", "target", targetDeployment)
 		return false, nil
 	} else if err != nil {
 		return false, fmt.Errorf("failed to check network policy: %w", err)
 	}
 
-	logger.Info("K07 vulnerability remediated", "target", targetDeployment, "subIssue", subIssue)
+	logger.Info("K05 vulnerability remediated", "target", targetDeployment, "subIssue", subIssue)
 	return true, nil
 }
 
-// checkK08 verifies if the secrets management vulnerability has been fixed
+// checkK03 verifies if the secrets management vulnerability has been fixed.
 // Only sub-issue 0 (secrets in ConfigMap) is supported
-func checkK08(ctx context.Context, c client.Client, targetDeployment, namespace string, subIssue *int) (bool, error) {
+func checkK03(ctx context.Context, c client.Client, targetDeployment, namespace string, subIssue *int) (bool, error) {
 	logger := log.FromContext(ctx)
 
 	configMapList := &corev1.ConfigMapList{}
@@ -286,11 +283,11 @@ func checkK08(ctx context.Context, c client.Client, targetDeployment, namespace 
 		return false, fmt.Errorf("failed to list ConfigMaps: %w", err)
 	}
 	if foundSecretInConfigMaps(configMapList.Items, targetDeployment) {
-		logger.Info("K08 vulnerability still active: secrets found in ConfigMap", "target", targetDeployment)
+		logger.Info("K03 vulnerability still active: secrets found in ConfigMap", "target", targetDeployment)
 		return false, nil
 	}
 
-	logger.Info("K08 vulnerability remediated", "target", targetDeployment, "subIssue", subIssue)
+	logger.Info("K03 vulnerability remediated", "target", targetDeployment, "subIssue", subIssue)
 	return true, nil
 }
 

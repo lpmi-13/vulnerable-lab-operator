@@ -2,36 +2,24 @@
 
 Sometimes, it's helpful to practice identifying security vulnerabilities in a running k8s cluster that's not production. So this is a very simple k8s operator that picks a random vulnerability from the [OWASP Kubernetes Top Ten](https://owasp.org/www-project-kubernetes-top-ten/) and configures a k3s cluster with that misconfiguration.
 
-## Owasp categories
+## OWASP Categories
 
-Implemented in this version:
+OWASP describes the Kubernetes Top 10 as a prioritized list of risks around the Kubernetes ecosystem.
 
-- [K01: Insecure Workload Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K01-insecure-workload-configurations)
+Implemented in this version from the 2025 prioritized list:
 
-- [K03: Overly Permissive RBAC Configurations](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K03-overly-permissive-rbac)
+- [K01: Insecure Workload Configurations](https://github.com/OWASP/www-project-kubernetes-top-ten/blob/main/2025/en/src/K01-Insecure-Workload-Configurations.md)
+- [K02: Overly Permissive Authorization Configurations](https://github.com/OWASP/www-project-kubernetes-top-ten/blob/main/2025/en/src/K02-Overly-Permissive-Authorization-Configurations.md) (current implementation focuses on RBAC-driven authorization mistakes)
+- [K03: Secrets Management Failures](https://github.com/OWASP/www-project-kubernetes-top-ten/blob/main/2025/en/src/K03-Secrets-Management-Failures.md)
+- [K05: Missing Network Segmentation Controls](https://github.com/OWASP/www-project-kubernetes-top-ten/blob/main/2025/en/src/K05-Missing-Network-Segmentation-Controls.md)
 
-- [K07: Missing Network Segmentation Controls](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K07-network-segmentation)
-
-- [K08: Secrets Management Failures](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K08-secrets-management)
-
-
-Not implemented in this version (documented here for completeness):
-
-- [K02: Supply Chain Vulnerabilities](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K02-supply-chain-vulnerabilities) (not implemented; would require image scanning tooling)
-
-- [K04: Lack of Centralized Policy Enforcement](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K04-policy-enforcement) (not implemented; depends on external policy infra)
-
-- [K05: Inadequate Logging and Monitoring](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K05-inadequate-logging) (not implemented; depends on external logging)
-
-- [K06: Broken Authentication Mechanisms](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K06-broken-authentication) (not implemented in current operator logic)
-
-- [K09: Misconfigured Cluster Components](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K09-misconfigured-cluster-components) (not implemented; cluster-level admin required)
-
-- [K10: Outdated and Vulnerable Kubernetes Components](https://owasp.org/www-project-kubernetes-top-ten/2022/en/src/K10-vulnerable-components) (not implemented; cluster-level admin required)
+The remaining 2025 OWASP Kubernetes categories are not implemented in this namespace-scoped lab.
 
 The first thing to do is run some scanners to see what you can pick up (or you can eyeball the cluster/spec/etc, but the scanners are probably what you'll be using in production automation).
 
-- [kubescape](https://kubescape.io/docs/install-cli/) (this should pick up all the issues in the  K01, K03, K07, K08 categories but might not pick up things from other OWASP categories)
+- [kubescape](https://kubescape.io/docs/install-cli/) (this should pick up all the issues in the K01, K02, K03, and K05 categories)
+
+Kubescape can also scan Kubernetes manifests directly from files or directories without a live cluster. In this repo, the `examples/` directory contains `VulnerableLab` CRs for the operator, so file-based scanning is most useful on rendered workload manifests rather than the CR examples themselves.
 
 ### scanning commands
 
@@ -42,9 +30,14 @@ Find the vulnerabilities by running one of the following scans:
 $ kubescape scan --include-namespaces test-lab
 ```
 
+- scan local Kubernetes YAML directly with kubescape
+```sh
+$ kubescape scan path/to/manifest.yaml
+```
+
 - scan a specific deployment in the namespace with kubescape
 ```sh
-$ kubescape scan workload Deployment/<deployment-name> --include namespaces test-lab
+$ kubescape scan workload Deployment/<deployment-name> --include-namespaces test-lab
 ```
 
 - scan with kubescape using one of the built-in frameworks (nsa/mitre)
@@ -64,7 +57,7 @@ Each implemented vulnerability category has sub-issues that are randomly selecte
   4. HostNetwork access - Sets hostNetwork: true (Kubescape C-0041)
   5. HostPath volume mount - Mounts host /var/log via hostPath volume (Kubescape C-0048)
 
-- K03 (Overly Permissive RBAC) - 5 sub-issues:
+- K02 (Overly Permissive Authorization Configurations) - 5 sub-issues:
 
   1. Secrets access role/binding - Grants list/get/watch on secrets in namespace (Kubescape C-0015)
   2. Pod creation role/binding - Grants create/list/watch on pods (Kubescape C-0188)
@@ -72,15 +65,13 @@ Each implemented vulnerability category has sub-issues that are randomly selecte
   4. Portforward role/binding - Grants pods/portforward (Kubescape C-0063)
   5. Exec role/binding - Grants pods/exec (Kubescape C-0002)
 
-- K07 (Missing Network Segmentation) - 1 sub-issue:
-
-  1. Backend microservice exposed - Removes user-service network policy (Kubescape C-0260)
-
-- K08 (Secrets Management Failures) - 1 sub-issue:
+- K03 (Secrets Management Failures) - 1 sub-issue:
 
   1. Secret data in ConfigMaps - Stores sensitive data in ConfigMap instead of Secret (Kubescape C-0012)
 
+- K05 (Missing Network Segmentation Controls) - 1 sub-issue:
 
+  1. Backend microservice exposed - Removes user-service network policy (Kubescape C-0260)
 
 ## Description
 

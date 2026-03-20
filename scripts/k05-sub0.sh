@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VULN="K03"
-SUB_ISSUE=2
+VULN="K05"
+SUB_ISSUE=0
 LAB_NAME="test-lab"
 
 echo "==> Cleaning up existing VulnerableLab..."
@@ -23,9 +23,7 @@ spec:
 EOF
 
 echo "==> Waiting for lab to become vulnerable..."
-kubectl wait vulnerablelab "$LAB_NAME" \
-  --for=jsonpath='{.status.state}'=Vulnerable \
-  --timeout=120s
+kubectl wait vulnerablelab "$LAB_NAME"   --for=jsonpath='{.status.state}'=Vulnerable   --timeout=120s
 
 echo "==> $VULN sub-issue $SUB_ISSUE is now active."
 kubectl get vulnerablelab "$LAB_NAME" -o yaml | grep -A5 status:
