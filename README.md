@@ -122,6 +122,22 @@ What this does:
 - Seeds a default `VulnerableLab` resource.
 - Runs the operator in the foreground so you can see logs and notifications.
 
+### Cleanup (Local)
+
+When you are finished with the lab, remove the local k3s resources with:
+
+```sh
+./scripts/cleanup-k3s-resources.sh
+```
+
+This removes discovered `VulnerableLab` resources, lab-managed RBAC, the lab namespaces, and the operator deployment resources. By default it also deletes the `vulnerablelabs.lab.security.lab` CRD.
+
+If you want to keep the CRD installed for a faster rerun, use:
+
+```sh
+./scripts/cleanup-k3s-resources.sh --keep-crd
+```
+
 ### macOS (brief)
 
 Use a local Kubernetes distribution that provides a kubeconfig:
